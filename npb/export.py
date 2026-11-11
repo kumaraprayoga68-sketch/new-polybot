@@ -7,6 +7,7 @@ Workflow GitHub nulis ini ke branch `data` tiap beberapa menit; dashboard statis
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict
 
@@ -28,6 +29,48 @@ def _drift(db: DB) -> list[dict]:
         by.setdefault((r["strategy"], r["decision"], r["horizon_sec"]), []).append(r["d"])
     return [{"strategy": k[0], "decision": k[1], "horizon_h": k[2] / 3600, "n": len(v),
              "avg_drift": mean(v)} for k, v in sorted(by.items())]
+
+
+def _pnl_curve(db: DB, mode: str = "paper", limit: int = 2000) -> list[list[float]]:
+    """[[waktu settle, PnL kumulatif], ...] untuk group yang sudah settle."""
+    points = []
+    for g in db.groups(mode=mode):
+        if not g.resolved:
+            continue
+        rows = db.query(
+            "SELECT MAX(r.resolved_at) AS t FROM orders o JOIN resolutions r "
+            "ON r.condition_id=o.condition_id WHERE o.group_id=?", (g.group_id,))
+        points.append((rows[0]["t"] or g.ts, g.pnl or 0.0))
+    points.sort(key=lambda p: p[0])     # stabil: settle di detik yang sama tetap urut bet
+    out, acc = [], 0.0
+    for t, p in points:
+        acc += p
+        out.append([round(t), round(acc, 4)])
+    return out[-limit:]
+
+
+def _hourly(db: DB, now: float, hours: int = 48) -> list[dict]:
+    """Jumlah sinyal per jam (ikut/skip) untuk `hours` jam terakhir."""
+    start = (int(now) // 3600 - hours + 1) * 3600
+    buckets = {start + i * 3600: {"take": 0, "skip": 0} for i in range(hours)}
+    for r in db.query("SELECT ts, decision FROM signals WHERE ts >= ?", (start,)):
+        b = buckets.get(int(r["ts"]) // 3600 * 3600)
+        if b is not None and r["decision"] in b:
+            b[r["decision"]] += 1
+    return [{"t": t, **v} for t, v in sorted(buckets.items())]
+
+
+def _skip_reason_key(reason: str) -> str:
+    """Kelompokkan alasan skip: buang angka & detail ('slippage: kita 0.45…' -> 'slippage')."""
+    return re.split(r"\s*-?[\d:(]", reason or "", maxsplit=1)[0].strip() or "lainnya"
+
+
+def _skip_reasons(db: DB, now: float) -> list[dict]:
+    counts: dict[str, int] = {}
+    for r in db.query("SELECT reason FROM signals WHERE decision='skip' AND ts > ?", (now - 86400,)):
+        k = _skip_reason_key(r["reason"])
+        counts[k] = counts.get(k, 0) + 1
+    return [{"reason": k, "n": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])]
 
 
 def build(db: DB, settings: Settings, followed: dict[str, float] | None = None) -> dict:
@@ -84,6 +127,9 @@ def build(db: DB, settings: Settings, followed: dict[str, float] | None = None) 
         "signals": signals,
         "signal_counts_24h": counts,
         "drift": _drift(db),
+        "pnl_curve": _pnl_curve(db),
+        "hourly": _hourly(db, now),
+        "skip_reasons_24h": _skip_reasons(db, now),
         "traders": traders,
         "traders_measured_at": float(db.get_meta("ct:stats_at", "0") or 0),
         "traders_progress": [int(db.get_meta("ct:pool_i", "0") or 0),

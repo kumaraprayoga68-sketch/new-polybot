@@ -29,7 +29,8 @@
   .banner.red{background:rgba(255,92,108,.12);border:1px solid var(--red);color:var(--red)}
   .banner.amber{background:rgba(255,176,32,.1);border:1px solid var(--amber);color:var(--amber)}
   .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
-  @media(min-width:700px){.tiles{grid-template-columns:repeat(5,1fr)}}
+  @media(min-width:600px){.tiles{grid-template-columns:repeat(3,1fr)}}
+  @media(min-width:940px){.tiles{grid-template-columns:repeat(5,1fr)}}
   .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
   .k{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
   .v{font:700 20px var(--mono);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -74,6 +75,22 @@
   .err{color:var(--red)}
   .foot{text-align:center;color:var(--mut);font:11px var(--mono);margin-top:22px;line-height:1.7}
   code{font-family:var(--mono)}
+  .charts{display:grid;grid-template-columns:1fr;gap:10px}
+  @media(min-width:700px){.charts{grid-template-columns:1fr 1fr}.charts .wide{grid-column:1/-1}}
+  .chart{position:relative}
+  .chart .ttl{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:6px}
+  .chart .ttl b{font:600 13px var(--mono)}
+  .chart .ttl span{font:12px var(--mono);color:var(--mut)}
+  .chart svg{display:block;width:100%;overflow:visible}
+  .chart .ax{font:10px var(--mono);fill:var(--mut)}
+  .chart .grid{stroke:var(--line);stroke-width:1}
+  .chart .zero{stroke:var(--mut);stroke-width:1;stroke-dasharray:3 3}
+  .legend{display:flex;gap:14px;font:11px var(--mono);color:var(--mut);margin-top:6px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  .tip{position:absolute;pointer-events:none;background:var(--card2);border:1px solid var(--line);
+    border-radius:8px;padding:6px 9px;font:11px var(--mono);color:var(--tx);white-space:nowrap;
+    box-shadow:0 4px 14px rgba(0,0,0,.4);display:none;z-index:2}
+  .nodata{color:var(--mut);font-size:12px;text-align:center;padding:30px 6px}
 </style>
 </head>
 <body>
@@ -91,6 +108,9 @@
 
   <div id="banners"></div>
   <div class="tiles" id="tiles"></div>
+
+  <h2 id="chartsH" hidden>Grafik</h2>
+  <div class="charts" id="charts"></div>
 
   <h2 id="gatesH" hidden>Gerbang live</h2>
   <div class="gates" id="gates"></div>
@@ -119,7 +139,7 @@ const pct = (x, sign = true) => (x == null ? "—" : (sign && x > 0 ? "+" : "") 
 const cls = x => (x > 0 ? "pos" : x < 0 ? "neg" : "");
 function ago(ts) {
   if (!ts) return "belum pernah";
-  const s = Math.floor(Date.now() / 1000 - ts);
+  const s = Math.max(0, Math.floor(Date.now() / 1000 - ts));   // jam HP vs server bisa beda dikit
   if (s < 60) return s + " dtk lalu";
   if (s < 3600) return Math.floor(s / 60) + " mnt lalu";
   if (s < 86400) return Math.floor(s / 3600) + " jam lalu";
@@ -157,6 +177,179 @@ function renderTop() {
   $("tiles").innerHTML = tiles.map(([k, v, s]) =>
     `<div class="tile"><div class="k">${k}</div><div class="v">${v} <small>${s}</small></div></div>`).join("");
 }
+
+// ── grafik (SVG polos, tanpa library) ─────────────────────────────────────
+const COL = { take: "#3ba3ff", skip: "#5d6b7d", line: "#3ba3ff", bar: "#3ba3ff" };
+const SKIP_LABEL = {
+  "slippage": "harga udah lari (slippage)",
+  "resolve": "resolve > batas hari",
+  "harga": "harga di luar 0.05–0.95",
+  "edge": "edge kecil setelah fee",
+  "Kelly": "Kelly 0 (gak ada edge)",
+  "end date lewat": "tanggal lewat jauh",
+  "depth gak cukup": "likuiditas kurang",
+  "order book kosong": "order book kosong",
+  "market tutup / gak terima order": "market udah tutup",
+};
+const fmtHour = t => new Date(t * 1000).toLocaleTimeString("id-ID", { hour: "2-digit", minute: "2-digit" });
+const fmtDate = t => new Date(t * 1000).toLocaleString("id-ID", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+function chartBox(id, title, sub, wide) {
+  return `<div class="card chart${wide ? " wide" : ""}" id="${id}">
+    <div class="ttl"><b>${title}</b><span>${sub}</span></div><div class="plot"></div><div class="tip"></div></div>`;
+}
+
+// Tooltip: posisi relatif kartu, dijaga biar gak keluar kartu.
+function showTip(card, html, x, y) {
+  const tip = card.querySelector(".tip");
+  tip.innerHTML = html; tip.style.display = "block";
+  const w = tip.offsetWidth, cw = card.clientWidth;
+  tip.style.left = Math.max(4, Math.min(cw - w - 4, x - w / 2)) + "px";
+  tip.style.top = Math.max(4, y - tip.offsetHeight - 10) + "px";
+}
+const hideTip = card => (card.querySelector(".tip").style.display = "none");
+
+function niceTicks(lo, hi, n = 4) {
+  if (lo === hi) { lo -= 1; hi += 1; }
+  const step0 = (hi - lo) / n, mag = 10 ** Math.floor(Math.log10(step0));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0);
+  // batas atas dibulatkan KE ATAS, biar titik tertinggi gak lewat garis teratas
+  const out = [], top = Math.ceil(hi / step - 1e-9) * step;
+  for (let v = Math.floor(lo / step) * step; v <= top + step * 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function drawPnl(card, pts) {
+  const plot = card.querySelector(".plot");
+  if (pts.length < 2) {
+    plot.innerHTML = `<div class="nodata">${pts.length ? "Baru 1 bet settle." : "Belum ada bet yang settle."}
+      Grafik muncul setelah bet paper mulai selesai.</div>`;
+    return;
+  }
+  const W = plot.clientWidth, H = 170, L = 44, R = 8, T = 8, B = 20;
+  const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+  const ticks = niceTicks(Math.min(0, ...ys), Math.max(0, ...ys));
+  const y0 = ticks[0], y1 = ticks[ticks.length - 1], x0 = xs[0], x1 = xs[xs.length - 1] || x0 + 1;
+  const X = t => L + (W - L - R) * (t - x0) / Math.max(1, x1 - x0);
+  const Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
+  const path = pts.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+  const last = ys[ys.length - 1];
+  plot.innerHTML = `<svg height="${H}" viewBox="0 0 ${W} ${H}">
+    ${ticks.map(v => `<line class="${v === 0 ? "zero" : "grid"}" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/>
+      <text class="ax" x="${L - 6}" y="${Y(v) + 3}" text-anchor="end">${v < 0 ? "-" : ""}$${Math.abs(v)}</text>`).join("")}
+    <text class="ax" x="${L}" y="${H - 4}">${fmtDate(x0)}</text>
+    <text class="ax" x="${W - R}" y="${H - 4}" text-anchor="end">${fmtDate(x1)}</text>
+    <path d="${path}" fill="none" stroke="${COL.line}" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="${X(x1)}" cy="${Y(last)}" r="4" fill="${COL.line}" stroke="var(--card)" stroke-width="2"/>
+    <line class="xh" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--mut)" stroke-width="1" visibility="hidden"/>
+    <circle class="dot" r="4" fill="${COL.line}" stroke="var(--card)" stroke-width="2" visibility="hidden"/>
+    <rect x="${L}" y="0" width="${W - L - R}" height="${H}" fill="transparent"/>
+  </svg>`;
+  const svg = plot.querySelector("svg"), xh = svg.querySelector(".xh"), dot = svg.querySelector(".dot");
+  const move = e => {
+    const r = svg.getBoundingClientRect(), mx = (e.touches ? e.touches[0].clientX : e.clientX) - r.left;
+    let i = 0, best = Infinity;
+    pts.forEach((p, j) => { const d = Math.abs(X(p[0]) - mx); if (d < best) { best = d; i = j; } });
+    const px = X(pts[i][0]), py = Y(pts[i][1]), step = i ? pts[i][1] - pts[i - 1][1] : pts[i][1];
+    xh.setAttribute("x1", px); xh.setAttribute("x2", px); xh.setAttribute("visibility", "visible");
+    dot.setAttribute("cx", px); dot.setAttribute("cy", py); dot.setAttribute("visibility", "visible");
+    showTip(card, `${fmtDate(pts[i][0])}<br>kumulatif <b>${usd(pts[i][1], true)}</b><br>bet ini ${usd(step, true)}`,
+      px + (r.left - card.getBoundingClientRect().left), py + (r.top - card.getBoundingClientRect().top));
+  };
+  const leave = () => { xh.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); hideTip(card); };
+  svg.addEventListener("mousemove", move); svg.addEventListener("touchstart", move, { passive: true });
+  svg.addEventListener("mouseleave", leave);
+}
+
+function drawHourly(card, rows) {
+  const plot = card.querySelector(".plot");
+  rows = rows.slice(-24);
+  const W = plot.clientWidth, H = 150, L = 26, R = 4, T = 8, B = 20;
+  const max = Math.max(1, ...rows.map(r => r.take + r.skip));
+  const ticks = niceTicks(0, max, 3).filter(v => v >= 0 && Number.isInteger(v));
+  const top = ticks[ticks.length - 1] || 1;
+  const bw = (W - L - R) / rows.length, gap = Math.min(2, bw * 0.2);
+  const Y = v => T + (H - T - B) * (1 - v / top);
+  const bar = (x, yTop, yBot, c, roundTop) => {
+    const h = Math.max(0, yBot - yTop);
+    if (h < 0.5) return "";
+    const r = roundTop ? Math.min(3, h / 2, (bw - gap) / 2) : 0;
+    return `<path d="M${x},${yBot}V${yTop + r}q0,${-r} ${r},${-r}H${x + bw - gap - r}q${r},0 ${r},${r}V${yBot}Z" fill="${c}"/>`;
+  };
+  plot.innerHTML = `<svg height="${H}" viewBox="0 0 ${W} ${H}">
+    ${ticks.map(v => `<line class="grid" x1="${L}" x2="${W - R}" y1="${Y(v)}" y2="${Y(v)}"/>
+      <text class="ax" x="${L - 5}" y="${Y(v) + 3}" text-anchor="end">${v}</text>`).join("")}
+    ${rows.map((r, i) => {
+      const x = L + i * bw + gap / 2, ySkip = Y(r.skip), yAll = Y(r.take + r.skip);
+      // skip di bawah, ikut di atas, dipisah celah 2px
+      return bar(x, ySkip, Y(0), COL.skip, !r.take) + (r.take ? bar(x, yAll, ySkip - (r.skip ? 2 : 0), COL.take, true) : "");
+    }).join("")}
+    <text class="ax" x="${L}" y="${H - 4}">${fmtHour(rows[0].t)}</text>
+    <text class="ax" x="${W - R}" y="${H - 4}" text-anchor="end">sekarang</text>
+    ${rows.map((r, i) => `<rect data-i="${i}" x="${L + i * bw}" y="0" width="${bw}" height="${H - B}" fill="transparent"/>`).join("")}
+  </svg>
+  <div class="legend"><span><i style="background:${COL.take}"></i>ikut</span><span><i style="background:${COL.skip}"></i>skip</span></div>`;
+  plot.querySelectorAll("rect[data-i]").forEach(el => {
+    const show = () => {
+      const r = rows[+el.dataset.i], b = el.getBoundingClientRect(), c = card.getBoundingClientRect();
+      showTip(card, `${fmtHour(r.t)}–${fmtHour(r.t + 3600)}<br>ikut <b>${r.take}</b> · skip <b>${r.skip}</b>`,
+        b.left - c.left + b.width / 2, Y(r.take + r.skip) + (b.top - c.top));
+    };
+    el.addEventListener("mouseenter", show); el.addEventListener("touchstart", show, { passive: true });
+    el.addEventListener("mouseleave", () => hideTip(card));
+  });
+}
+
+function drawReasons(card, rows) {
+  const plot = card.querySelector(".plot");
+  if (!rows.length) { plot.innerHTML = `<div class="nodata">Gak ada skip dalam 24 jam terakhir.</div>`; return; }
+  rows = rows.slice(0, 6);
+  const total = rows.reduce((a, r) => a + r.n, 0), max = Math.max(...rows.map(r => r.n));
+  plot.innerHTML = rows.map(r => {
+    const label = SKIP_LABEL[r.reason] || r.reason;
+    return `<div style="margin:0 0 9px" title="${esc(r.reason)}">
+      <div style="display:flex;justify-content:space-between;font:12px var(--mono);margin-bottom:4px">
+        <span>${esc(label)}</span><span style="color:var(--mut)">${r.n} · ${Math.round(r.n / total * 100)}%</span></div>
+      <div style="height:8px;background:var(--card2);border-radius:4px;overflow:hidden">
+        <div style="height:100%;width:${(r.n / max * 100).toFixed(1)}%;background:${COL.bar};border-radius:0 4px 4px 0"></div></div></div>`;
+  }).join("");
+}
+
+// Bot versi lama belum ngekspor data grafik: hitung dari bets/signals yang ada.
+// (Signals cuma 200 terakhir, jadi angkanya bisa sedikit kurang dari versi bot.)
+const skipKey = r => (r || "").split(/\s*-?[\d:(]/)[0].trim() || "lainnya";
+function fallbackHourly() {
+  const now = Math.floor(Date.now() / 1000), start = (Math.floor(now / 3600) - 23) * 3600;
+  const rows = Array.from({ length: 24 }, (_, i) => ({ t: start + i * 3600, take: 0, skip: 0 }));
+  D.signals.forEach(s => { const i = Math.floor((s.ts - start) / 3600); if (i >= 0 && i < 24 && rows[i][s.decision] !== undefined) rows[i][s.decision]++; });
+  return rows;
+}
+function fallbackReasons() {
+  const c = {}, since = Date.now() / 1000 - 86400;
+  D.signals.filter(s => s.decision === "skip" && s.ts > since).forEach(s => { const k = skipKey(s.reason); c[k] = (c[k] || 0) + 1; });
+  return Object.entries(c).map(([reason, n]) => ({ reason, n })).sort((a, b) => b.n - a.n);
+}
+function fallbackPnl() {
+  let acc = 0;
+  return D.bets.filter(b => b.resolved).sort((a, b) => a.ts - b.ts).map(b => [b.ts, (acc += b.pnl)]);
+}
+
+function renderCharts() {
+  $("chartsH").hidden = false;
+  const reasons = D.skip_reasons_24h || fallbackReasons();
+  const nSkip = reasons.reduce((a, r) => a + r.n, 0);
+  const pnl = D.pnl_curve || fallbackPnl();
+  const last = pnl.length ? pnl[pnl.length - 1][1] : 0;
+  $("charts").innerHTML =
+    chartBox("c-pnl", "PnL kumulatif (paper)", `${pnl.length} settle · <span class="${cls(last)}">${usd(last, true)}</span>`, true) +
+    chartBox("c-hour", "Sinyal per jam", "24 jam terakhir") +
+    chartBox("c-skip", "Kenapa di-skip", `${nSkip} skip · 24 jam`);
+  drawPnl($("c-pnl"), pnl);
+  drawHourly($("c-hour"), D.hourly && D.hourly.length ? D.hourly : fallbackHourly());
+  drawReasons($("c-skip"), reasons);
+}
+let resizeT;
+window.addEventListener("resize", () => { clearTimeout(resizeT); resizeT = setTimeout(() => D && renderCharts(), 150); });
 
 function renderGates() {
   $("gatesH").hidden = false;
@@ -287,7 +480,7 @@ async function load() {
     }
     if (!r.ok) throw new Error("HTTP " + r.status);
     D = await r.json();
-    renderTop(); renderGates(); renderCalib(); renderTabs(); renderPanel();
+    renderTop(); renderCharts(); renderGates(); renderCalib(); renderTabs(); renderPanel();
   } catch (e) {
     $("dot").style.background = "var(--red)";
     $("sub").textContent = "gagal memuat";

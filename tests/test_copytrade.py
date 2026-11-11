@@ -19,7 +19,8 @@ def trade(cid="c1", tok="y1", price=0.40, size=500, ts=None, side="BUY", tx="tx1
 
 
 def setup(api, db, settings, ask=0.41, edge=0.08, **cfg):
-    db.upsert_trader_stats(W, 100, edge, 3.0, edge)
+    db.upsert_trader_stats(W, 100, edge, 4.0, edge, norm_edge=edge / 0.49, holdout_n=30,
+                           holdout_edge=edge)
     api.markets["c1"] = {"closed": False, "accepting_orders": True, "taker_base_fee": 0,
                          "end_date_iso": "2099-01-01T00:00:00Z"}
     api.book_map["y1"] = make_book([(ask, 1000)], bids=[(ask - 0.02, 1000)], token="y1")
@@ -70,7 +71,7 @@ def test_skips_old_small_and_sell_trades(api, db, settings):
 
 
 def test_slippage_guard(api, db, settings):
-    ct = setup(api, db, settings, ask=0.45)      # trader 0.40, kita 0.45 > +0.02
+    ct = setup(api, db, settings, ask=0.45, edge=0.3)   # trader 0.40, kita 0.45 > +0.02
     db.set_trader_last_ts(W, 0)
     api.trades[W] = [trade()]
     assert ct.decisions(log=lambda *_: None) == []
@@ -80,8 +81,12 @@ def test_slippage_guard(api, db, settings):
 
 def test_untrusted_trader_not_followed(api, db, settings):
     ct = setup(api, db, settings)
-    db.upsert_trader_stats("0xlucky", 10, 0.3, 5.0, 0.07)     # sampel kecil
-    db.upsert_trader_stats("0xnoise", 200, 0.01, 0.8, 0.01)   # gak signifikan
+    hold = dict(norm_edge=0.1, holdout_n=30, holdout_edge=0.05)
+    db.upsert_trader_stats("0xlucky", 10, 0.3, 5.0, 0.07, **hold)     # sampel kecil
+    db.upsert_trader_stats("0xnoise", 200, 0.01, 0.8, 0.01, **hold)   # gak signifikan
+    db.upsert_trader_stats("0xfaded", 200, 0.05, 4.0, 0.04, norm_edge=0.1, holdout_n=60,
+                           holdout_edge=-0.02)                       # holdout negatif
+    db.upsert_trader_stats("0xold", 200, 0.05, 4.0, 0.04)            # belum diukur ulang (v1)
     assert set(ct.followed()) == {W}
 
 

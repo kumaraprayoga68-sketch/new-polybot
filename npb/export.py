@@ -33,15 +33,8 @@ def _drift(db: DB) -> list[dict]:
 
 def _pnl_curve(db: DB, mode: str = "paper", limit: int = 2000) -> list[list[float]]:
     """[[waktu settle, PnL kumulatif], ...] untuk group yang sudah settle."""
-    points = []
-    for g in db.groups(mode=mode):
-        if not g.resolved:
-            continue
-        rows = db.query(
-            "SELECT MAX(r.resolved_at) AS t FROM orders o JOIN resolutions r "
-            "ON r.condition_id=o.condition_id WHERE o.group_id=?", (g.group_id,))
-        points.append((rows[0]["t"] or g.ts, g.pnl or 0.0))
-    points.sort(key=lambda p: p[0])     # stabil: settle di detik yang sama tetap urut bet
+    points = [(t or 0.0, p) for t, p in db.settled_group_pnls(mode)]
+    points.sort(key=lambda p: p[0])
     out, acc = [], 0.0
     for t, p in points:
         acc += p

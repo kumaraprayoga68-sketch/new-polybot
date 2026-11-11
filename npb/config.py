@@ -56,8 +56,11 @@ class RiskSettings:
     max_exposure_usd: float = 100.0
     # Maksimal per market (condition_id), biar gak numpuk di satu kejadian.
     max_market_usd: float = 15.0
-    # Rugi realized 24 jam terakhir lewat ini -> semua order baru berhenti.
+    # Rugi 24 jam terakhir lewat ini -> semua order baru berhenti. Dihitung dari
+    # rugi realized + rugi belum-realized posisi terbuka (mark-to-market di mid).
     daily_loss_limit_usd: float = 20.0
+    # Seberapa sering posisi terbuka dinilai ulang buat rem rugi di atas.
+    mtm_interval_min: float = 5.0
     # Posisi yang end_date-nya lewat > ini hari tapi belum settle = zombie,
     # gak dihitung eksposur (pelajaran polybot: 247 zombie nyekek bot 21 hari).
     zombie_days: int = 14
@@ -92,12 +95,20 @@ class CopytradeSettings:
     # Syarat trader diikuti: edge per share terukur vs harga beli mereka sendiri.
     min_trader_markets: int = 30
     min_trader_t: float = 2.0
+    # Koreksi multiple testing (Bonferroni): nguji N kandidat di t>=2 pasti ada
+    # yang lolos karena hoki. t yang dibutuhkan dinaikkan ke z(1 - alpha/N).
+    # 0 = matikan koreksi (cuma pakai min_trader_t).
+    family_alpha: float = 0.05
+    # Holdout: market TERBARU trader (1/3) gak dipakai buat seleksi; edge di situ
+    # harus tetap positif, dari minimal sekian market.
+    min_holdout_markets: int = 10
     shrink_k: float = 30.0
     stats_refresh_hours: float = 12.0
     stats_batch: int = 8             # trader yang diukur per siklus (dicicil)
     max_resolution_lookups: int = 150
     # Sinyal: cuma trade BARU, gak lebih tua dari ini.
     max_signal_age_sec: int = 600
+    max_trade_pages: int = 5         # halaman /trades (100 baris) per trader per siklus
     min_trader_usdc: float = 50.0
     # Tolak kalau harga rata-rata kita lebih mahal dari harga trader + ini.
     max_slippage: float = 0.02
@@ -127,6 +138,9 @@ class Settings:
     bankroll_usd: float = 100.0
     db_path: str = "data/npb.db"
     loop_interval_sec: int = 60
+    # Paper: ambil order book BARU tepat sebelum fill, pakai limit = harga terburuk
+    # yang dihitung saat memutuskan (persis order FOK live). Kalau harga lari, gagal.
+    paper_refresh_book: bool = True
     telegram_token: str = ""
     telegram_chat_id: str = ""
     private_key: str = ""
@@ -151,6 +165,7 @@ class Settings:
             bankroll_usd=_f("BANKROLL_USD", 100.0),
             db_path=_s("NPB_DB_PATH", "data/npb.db"),
             loop_interval_sec=_i("LOOP_INTERVAL_SEC", 60),
+            paper_refresh_book=_b("PAPER_REFRESH_BOOK", True),
             telegram_token=_s("TELEGRAM_BOT_TOKEN", ""),
             telegram_chat_id=_s("TELEGRAM_CHAT_ID", ""),
             private_key=_s("PRIVATE_KEY", ""),
@@ -161,6 +176,7 @@ class Settings:
                 max_exposure_usd=_f("MAX_EXPOSURE_USD", 100.0),
                 max_market_usd=_f("MAX_MARKET_USD", 15.0),
                 daily_loss_limit_usd=_f("DAILY_LOSS_LIMIT_USD", 20.0),
+                mtm_interval_min=_f("MTM_INTERVAL_MIN", 5.0),
                 zombie_days=_i("ZOMBIE_DAYS", 14),
             ),
             fees=FeeSettings(rate_override=_f("FEE_RATE_OVERRIDE", -1.0)),
@@ -176,11 +192,14 @@ class Settings:
                 follow_top=_i("CT_FOLLOW_TOP", 15),
                 min_trader_markets=_i("CT_MIN_TRADER_MARKETS", 30),
                 min_trader_t=_f("CT_MIN_TRADER_T", 2.0),
+                family_alpha=_f("CT_FAMILY_ALPHA", 0.05),
+                min_holdout_markets=_i("CT_MIN_HOLDOUT_MARKETS", 10),
                 shrink_k=_f("CT_SHRINK_K", 30.0),
                 stats_refresh_hours=_f("CT_STATS_REFRESH_HOURS", 12.0),
                 stats_batch=_i("CT_STATS_BATCH", 8),
                 max_resolution_lookups=_i("CT_MAX_RESOLUTION_LOOKUPS", 150),
                 max_signal_age_sec=_i("CT_MAX_SIGNAL_AGE_SEC", 600),
+                max_trade_pages=_i("CT_MAX_TRADE_PAGES", 5),
                 min_trader_usdc=_f("CT_MIN_TRADER_USDC", 50.0),
                 max_slippage=_f("CT_MAX_SLIPPAGE", 0.02),
                 min_price=_f("CT_MIN_PRICE", 0.05),

@@ -194,11 +194,22 @@ def token_for_outcome(market: dict, outcome: str) -> dict | None:
 def payouts(market: dict | None) -> dict[str, float] | None:
     """{token_id: payout per share} kalau market sudah settle, selain itu None.
 
-    closed=True belum tentu settle (bisa nunggu UMA). Settle = ada winner.
+    closed=True belum tentu settle (bisa nunggu UMA). Settle = ada winner, ATAU
+    market dibatalin / dibagi rata (50-50): gak ada winner dan semua token
+    dihargai persis 0.5. Tanpa kasus kedua, posisi begitu nyangkut "belum settle"
+    selamanya — ngisi eksposur dan gak pernah masuk scorecard.
     """
     if not market or not market.get("closed"):
         return None
     tokens = market.get("tokens") or []
-    if not any(t.get("winner") for t in tokens):
+    if not tokens:
         return None
-    return {str(t.get("token_id")): (1.0 if t.get("winner") else 0.0) for t in tokens}
+    if any(t.get("winner") for t in tokens):
+        return {str(t.get("token_id")): (1.0 if t.get("winner") else 0.0) for t in tokens}
+    try:
+        prices = [float(t.get("price")) for t in tokens]
+    except (TypeError, ValueError):
+        return None
+    if len(tokens) == 2 and all(abs(p - 0.5) < 1e-9 for p in prices):
+        return {str(t.get("token_id")): 0.5 for t in tokens}
+    return None

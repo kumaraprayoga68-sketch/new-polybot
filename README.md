@@ -17,8 +17,8 @@ Penyebab yang bisa diperbaiki:
 |---|---|
 | Paper fill di `curPrice`, tanpa fee | Fill disimulasikan dengan menyapu order book + fee taker (`book.py`, `fees.py`) |
 | Copy **semua posisi terbuka** trader, di harga sekarang | Cuma copy **trade baru** (≤ 10 menit), dan skip kalau harga kita > harga trader + 2 sen |
-| Trader dipilih dari win rate / leaderboard | Dipilih dari **edge per share vs harga beli mereka**, harus signifikan (t ≥ 2) dan di-shrink (`traders.py`) |
-| Kelly pakai win rate sebagai peluang | Kelly pakai peluang = harga trader + edge trader, biaya = harga rata-rata kita setelah fee |
+| Trader dipilih dari win rate / leaderboard | Dipilih dari **edge per share vs harga beli mereka**, signifikan setelah **koreksi multiple testing**, tetap positif di **holdout** (market terbaru), dan di-shrink (`traders.py`) |
+| Kelly pakai win rate sebagai peluang | Kelly pakai peluang = harga trader + edge trader (ternormalisasi ke harga), biaya = harga rata-rata kita setelah fee, modal = bankroll dikurangi posisi terbuka; kekecilan = skip |
 | Data paper dari mode agresif, beda dari settingan live | Paper dan live pakai **logika dan rem yang sama persis** |
 | Arbitrage: `/price?side=BUY` ternyata balikin **bid**, dan dolar sama per leg (share beda = gak hedge) | Basket neg-risk dengan **share sama** di tiap leg, dihitung dari book asli |
 | Error API ditelan jadi list kosong (bot mati senyap 2x) | 404 = gak ada; error lain = `ApiError`, dicatat + alert Telegram |
@@ -125,7 +125,11 @@ rem) yang jadi modal buat nguji strategi berikutnya.
 ## Catatan & batasan
 
 - Model fee `rate × min(p, 1−p) × shares` itu asumsi konservatif — **wajib dikalibrasi**.
-- Paper fill pakai book saat keputusan; latensi dan antrian order belum disimulasikan.
+- Paper fill ambil order book baru tepat sebelum fill dengan limit = harga terburuk saat
+  keputusan (sama kayak FOK live). Antrian order di dalam satu level belum disimulasikan.
+- Rem rugi 24 jam ikut ngitung rugi belum-realized posisi terbuka (dinilai di mid tiap
+  `MTM_INTERVAL_MIN`).
+- Market yang dibatalin / dibagi rata (kedua token 0.5, tanpa winner) dihitung settle 50-50.
 - Skill trader cuma menilai keputusan BELI sampai settle; jual lebih awal diabaikan.
 - Leaderboard v2 mengabaikan parameter window (selalu harian), jadi cuma dipakai
   sebagai kandidat mentah. Isi `TRADER_WALLETS` kalau punya daftar sendiri.

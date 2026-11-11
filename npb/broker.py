@@ -44,14 +44,32 @@ def round_up_to_tick(price: float, tick: float) -> float:
 
 
 class PaperBroker:
+    """Kalau dikasih `api`, order book diambil ULANG tepat sebelum fill dan diisi
+    dengan limit = harga terburuk yang dihitung saat memutuskan — persis order
+    FOK di LiveBroker. Antara keputusan dan fill ada jeda (siklus lain, leg lain
+    di basket), jadi kalau harga lari, paper juga gagal. Tanpa `api` (tes),
+    fill pakai book yang dilihat strategi."""
     mode = "paper"
 
+    def __init__(self, api=None):
+        self.api = api
+
     def buy(self, leg: Leg) -> LegResult:
-        fill = leg.book.buy(leg.shares, leg.fee_rate)
-        if fill is None:
+        sim = leg.book.buy(leg.shares, leg.fee_rate)
+        if sim is None:
             return LegResult("rejected", error="depth order book gak cukup (FOK)")
-        return LegResult("filled", fill.shares, fill.cost, fill.fee,
-                         round_up_to_tick(fill.worst_price, leg.book.tick_size))
+        limit = round_up_to_tick(sim.worst_price, leg.book.tick_size)
+        fill = sim
+        if self.api is not None:
+            try:
+                fresh = self.api.book(leg.token_id)
+            except Exception as e:  # noqa: BLE001 — sama kayak live: order gagal, loop jalan terus
+                return LegResult("error", limit_price=limit, error=f"ambil book: {e}")
+            fill = fresh.buy(leg.shares, leg.fee_rate, limit=limit) if fresh else None
+            if fill is None:
+                return LegResult("rejected", limit_price=limit,
+                                 error=f"harga lari / depth hilang di limit {limit:.3f} (FOK)")
+        return LegResult("filled", fill.shares, fill.cost, fill.fee, limit)
 
 
 class LiveBroker:

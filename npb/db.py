@@ -14,7 +14,6 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import date
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -60,6 +59,7 @@ CREATE TABLE IF NOT EXISTS orders (
 );
 CREATE INDEX IF NOT EXISTS orders_group ON orders(group_id);
 CREATE INDEX IF NOT EXISTS orders_cid ON orders(condition_id);
+CREATE INDEX IF NOT EXISTS orders_mode ON orders(mode, status);
 CREATE TABLE IF NOT EXISTS resolutions (
     condition_id TEXT PRIMARY KEY,
     payouts TEXT NOT NULL,
@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS trader_stats (
     mean_edge REAL,
     t_stat REAL,
     shrunk_edge REAL,
-    updated_at REAL
+    updated_at REAL,
+    norm_edge REAL,
+    holdout_n INTEGER,
+    holdout_edge REAL
 );
 CREATE TABLE IF NOT EXISTS trader_cursor (
     wallet TEXT PRIMARY KEY,
@@ -140,7 +143,15 @@ class DB:
         if path != ":memory:":
             self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Tambah kolom baru ke DB lama (branch `data` bawa DB dari versi sebelumnya)."""
+        have = {r["name"] for r in self.conn.execute("PRAGMA table_info(trader_stats)")}
+        for col, typ in (("norm_edge", "REAL"), ("holdout_n", "INTEGER"), ("holdout_edge", "REAL")):
+            if col not in have:
+                self.conn.execute(f"ALTER TABLE trader_stats ADD COLUMN {col} {typ}")
 
     def execute(self, sql: str, params: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
@@ -228,9 +239,12 @@ class DB:
         return int(cur.lastrowid)
 
     def unresolved_condition_ids(self) -> list[str]:
+        """Market yang belum settle, end date paling lama dulu (paling mungkin settle)."""
         rows = self.query(
-            "SELECT DISTINCT o.condition_id FROM orders o WHERE o.status='filled' "
-            "AND NOT EXISTS (SELECT 1 FROM resolutions r WHERE r.condition_id=o.condition_id)")
+            "SELECT o.condition_id, MIN(COALESCE(NULLIF(o.end_date, ''), '9999')) AS e "
+            "FROM orders o WHERE o.status='filled' "
+            "AND NOT EXISTS (SELECT 1 FROM resolutions r WHERE r.condition_id=o.condition_id) "
+            "GROUP BY o.condition_id ORDER BY e, o.condition_id")
         return [r["condition_id"] for r in rows]
 
     def set_resolution(self, condition_id: str, payouts: dict[str, float]) -> None:
@@ -271,47 +285,73 @@ class DB:
                     g.payout += json.loads(r["payouts"]).get(r["token_id"], 0.0) * r["shares"]
         return list(by.values())
 
-    def market_exposure(self, condition_id: str) -> float:
-        rows = self.query(
-            "SELECT COALESCE(SUM(cost + fee), 0) AS t FROM orders o WHERE status='filled' "
-            "AND condition_id=? AND NOT EXISTS "
-            "(SELECT 1 FROM resolutions r WHERE r.condition_id=o.condition_id)", (condition_id,))
-        return float(rows[0]["t"])
+    # Agregat per group di SQL. Dulu tiap cek risiko nge-load SEMUA order ke Python
+    # (+1 query per group) — makin lama bot jalan, makin lambat tiap order.
+    _GROUP_AGG = (
+        "SELECT o.group_id, SUM(o.cost + o.fee) AS cost, MAX(o.end_date) AS end_date, "
+        "SUM(COALESCE(json_extract(r.payouts, '$.\"' || o.token_id || '\"'), 0) * o.shares) "
+        "AS payout, SUM(CASE WHEN r.condition_id IS NULL THEN 1 ELSE 0 END) AS open_legs, "
+        "MAX(r.resolved_at) AS resolved_at "
+        "FROM orders o LEFT JOIN resolutions r ON r.condition_id=o.condition_id "
+        "WHERE o.status='filled'")
+
+    def _agg(self, mode: str | None, having: str, params: tuple = ()) -> list[sqlite3.Row]:
+        sql, p = self._GROUP_AGG, []
+        if mode:
+            sql += " AND o.mode=?"
+            p.append(mode)
+        return self.query(sql + " GROUP BY o.group_id HAVING " + having, tuple(p) + params)
+
+    def market_exposure(self, condition_id: str, mode: str | None = None) -> float:
+        sql = ("SELECT COALESCE(SUM(cost + fee), 0) AS t FROM orders o WHERE status='filled' "
+               "AND condition_id=? AND NOT EXISTS "
+               "(SELECT 1 FROM resolutions r WHERE r.condition_id=o.condition_id)")
+        params: tuple = (condition_id,)
+        if mode:
+            sql += " AND mode=?"
+            params += (mode,)
+        return float(self.query(sql, params)[0]["t"])
 
     def open_exposure(self, zombie_days: int, mode: str | None = None) -> float:
-        today = date.today()
-        total = 0.0
-        for g in self.groups(mode=mode):
-            if g.resolved:
-                continue
-            try:
-                if g.end_date and (today - date.fromisoformat(g.end_date[:10])).days > zombie_days:
-                    continue
-            except ValueError:
-                pass
-            total += g.total_cost
-        return total
+        """Modal di group yang belum settle. Group yang end date-nya lewat > zombie_days
+        hari (UTC) gak dihitung."""
+        rows = self._agg(mode, "open_legs > 0 AND (MAX(o.end_date) = '' OR MAX(o.end_date) IS NULL "
+                               "OR MAX(o.end_date) >= date('now', ?))", (f"-{int(zombie_days)} days",))
+        return sum(r["cost"] for r in rows)
+
+    def settled_group_pnls(self, mode: str | None = None,
+                           since_ts: float | None = None) -> list[tuple[float, float]]:
+        """[(waktu settle terakhir, PnL)] untuk group yang semua leg-nya settle."""
+        having, params = "open_legs = 0", ()
+        if since_ts is not None:
+            having += " AND MAX(r.resolved_at) >= ?"
+            params = (since_ts,)
+        return [(r["resolved_at"], r["payout"] - r["cost"]) for r in self._agg(mode, having, params)]
 
     def realized_pnl_since(self, since_ts: float, mode: str | None = None) -> float:
         """PnL group yang settle sejak since_ts (pakai waktu resolusi terakhir)."""
-        total = 0.0
-        for g in self.groups(mode=mode):
-            if not g.resolved:
-                continue
-            rows = self.query(
-                "SELECT MAX(r.resolved_at) AS t FROM orders o JOIN resolutions r "
-                "ON r.condition_id=o.condition_id WHERE o.group_id=?", (g.group_id,))
-            if rows and rows[0]["t"] and rows[0]["t"] >= since_ts:
-                total += g.pnl or 0.0
-        return total
+        return sum(p for _, p in self.settled_group_pnls(mode, since_ts))
+
+    def open_positions(self, mode: str | None = None) -> list[sqlite3.Row]:
+        """Per token yang belum settle: share & modal (buat mark-to-market)."""
+        sql = ("SELECT o.token_id, SUM(o.shares) AS shares, SUM(o.cost + o.fee) AS cost "
+               "FROM orders o WHERE o.status='filled' AND NOT EXISTS "
+               "(SELECT 1 FROM resolutions r WHERE r.condition_id=o.condition_id)")
+        params: tuple = ()
+        if mode:
+            sql += " AND o.mode=?"
+            params = (mode,)
+        return self.query(sql + " GROUP BY o.token_id", params)
 
     # ── traders ──────────────────────────────────────────────────────────────
     def upsert_trader_stats(self, wallet: str, markets: int, mean_edge: float, t_stat: float,
-                            shrunk_edge: float) -> None:
+                            shrunk_edge: float, *, norm_edge: float | None = None,
+                            holdout_n: int = 0, holdout_edge: float = 0.0) -> None:
         self.execute(
             "INSERT OR REPLACE INTO trader_stats(wallet, markets, mean_edge, t_stat, shrunk_edge, "
-            "updated_at) VALUES(?,?,?,?,?,?)",
-            (wallet, markets, mean_edge, t_stat, shrunk_edge, time.time()))
+            "updated_at, norm_edge, holdout_n, holdout_edge) VALUES(?,?,?,?,?,?,?,?,?)",
+            (wallet, markets, mean_edge, t_stat, shrunk_edge, time.time(), norm_edge,
+             holdout_n, holdout_edge))
 
     def trader_stats(self) -> list[sqlite3.Row]:
         return self.query("SELECT * FROM trader_stats ORDER BY shrunk_edge DESC")

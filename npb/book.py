@@ -89,12 +89,15 @@ class OrderBook:
     def ask_depth(self) -> float:
         return sum(l.size for l in self.asks)
 
-    def buy(self, shares: float, fee_rate: float) -> Fill | None:
-        """Simulasi market BUY `shares` share. None kalau depth gak cukup (FOK gagal)."""
+    def buy(self, shares: float, fee_rate: float, limit: float | None = None) -> Fill | None:
+        """Simulasi BUY `shares` share. None kalau depth gak cukup (FOK gagal).
+        Dengan `limit`, level di atas harga itu gak boleh disentuh (order limit FOK)."""
         if shares <= 0:
             return None
         left, cost, fee, worst = shares, 0.0, 0.0, 0.0
         for lvl in self.asks:
+            if limit is not None and lvl.price > limit + 1e-9:
+                return None
             take = min(left, lvl.size)
             cost += take * lvl.price
             fee += taker_fee(lvl.price, take, fee_rate)

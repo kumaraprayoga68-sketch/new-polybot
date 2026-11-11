@@ -81,8 +81,10 @@ def main(argv: list[str] | None = None) -> int:
             bot.copytrade.refresh_stats()
         for r in bot.db.trader_stats()[:25]:
             print(f"{r['wallet']} n={r['markets']:<4} edge {r['mean_edge']:+.4f} "
-                  f"t {r['t_stat']:5.2f} shrunk {r['shrunk_edge']:+.4f}")
-        print(f"\ndiikuti: {len(bot.copytrade.followed())} trader")
+                  f"t {r['t_stat']:5.2f} shrunk {r['shrunk_edge']:+.4f} "
+                  f"holdout {r['holdout_edge'] or 0:+.4f} (n={r['holdout_n'] or 0})")
+        print(f"\nt minimum setelah koreksi multiple testing: {bot.copytrade.required_t():.2f}")
+        print(f"diikuti: {len(bot.copytrade.followed())} trader")
     elif a.cmd == "arb-scan":
         opps = bot.arbitrage.opportunities()
         for bk, sz, _, _ in opps:

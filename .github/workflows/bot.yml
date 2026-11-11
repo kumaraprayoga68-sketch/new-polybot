@@ -41,8 +41,10 @@ jobs:
       CHECKPOINT_MINUTES: "30"
       DASH_MINUTES: "5"
       # Copytrade: cuma market yang selesai <= 7 hari (hasil cepat ketahuan), dan
-      # kandidat trader lebih banyak + syarat skill sedikit dilonggarin biar sinyal
-      # gak cuma dari segelintir trader NBA. Gerbang live tetap ketat (scorecard).
+      # kandidat trader lebih banyak. CT_MIN_TRADER_T cuma batas bawah: dengan 300
+      # kandidat, koreksi multiple testing (CT_FAMILY_ALPHA) naikin syaratnya ke
+      # t ~3.6, plus edge di holdout (market terbaru) harus positif. Kalau hasilnya
+      # 0 trader diikuti, itu jawaban jujur — bukan bug.
       CT_MAX_DAYS_TO_RESOLVE: "7"
       CT_LEADERBOARD_POOL: "300"
       CT_MIN_TRADER_T: "1.5"

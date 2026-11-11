@@ -5,13 +5,14 @@ Urutan cek sebelum order (semua berlaku juga di paper, biar paper = latihan live
   1. kill switch
   2. hard cap per order (MAX_ORDER_USD)
   3. plafon eksposur total + per market
-  4. batas rugi harian
+  4. batas rugi 24 jam (realized + belum-realized dari mark-to-market runner)
 Mode live cuma kalau: NPB_MODE=live + LIVE_TRADING_ENABLED=true + strategi itu
 sudah di-PROMOTE (lulus gerbang statistik). Strategi yang belum lulus tetap jalan
 di paper walau bot mode live — jadi bukti terus terkumpul.
 """
 from __future__ import annotations
 
+import json
 import time
 from dataclasses import dataclass, field
 
@@ -42,10 +43,10 @@ class ExecResult:
 
 
 class Executor:
-    def __init__(self, settings: Settings, db: DB, live_broker=None, notify=None):
+    def __init__(self, settings: Settings, db: DB, live_broker=None, notify=None, api=None):
         self.s = settings
         self.db = db
-        self.paper = PaperBroker()
+        self.paper = PaperBroker(api if settings.paper_refresh_book else None)
         self.live = live_broker
         self.notify = notify or (lambda msg: None)
 
@@ -75,12 +76,26 @@ class Executor:
         for leg, t in est:
             per_market[leg.condition_id] = per_market.get(leg.condition_id, 0.0) + t
         for cid, t in per_market.items():
-            if self.db.market_exposure(cid) + t > r.max_market_usd + 1e-9:
+            if self.db.market_exposure(cid, mode=mode) + t > r.max_market_usd + 1e-9:
                 return f"market {cid[:10]}… lewat plafon per market ${r.max_market_usd:.2f}"
-        loss = self.db.realized_pnl_since(time.time() - 86400, mode=mode)
-        if loss < -r.daily_loss_limit_usd:
-            return f"rugi 24 jam ${-loss:.2f} > batas ${r.daily_loss_limit_usd:.2f}"
+        realized = self.db.realized_pnl_since(time.time() - 86400, mode=mode)
+        unrealized = min(0.0, self.unrealized(mode))
+        if realized + unrealized < -r.daily_loss_limit_usd:
+            return (f"rugi 24 jam ${-(realized + unrealized):.2f} (realized ${-realized:.2f} + "
+                    f"posisi terbuka ${-unrealized:.2f}) > batas ${r.daily_loss_limit_usd:.2f}")
         return None
+
+    def unrealized(self, mode: str) -> float:
+        """PnL belum-realized posisi terbuka dari mark-to-market terakhir runner.
+        0 kalau belum ada / basi (> 3x interval) — gak nebak."""
+        try:
+            m = json.loads(self.db.get_meta(f"mtm:{mode}", "") or "{}")
+        except ValueError:
+            return 0.0
+        max_age = 3 * self.s.risk.mtm_interval_min * 60
+        if not m or time.time() - float(m.get("ts", 0)) > max_age:
+            return 0.0
+        return float(m.get("unrealized", 0.0))
 
     def submit(self, d: Decision) -> ExecResult:
         mode = self.mode_for(d.strategy)
@@ -105,7 +120,8 @@ class Executor:
                 # Leg pertama udah ke-fill, sisanya gagal: posisi gak lagi ter-hedge.
                 # Jangan coba "beresin sendiri" — stop semua & minta cek manual.
                 msg = (f"{d.strategy}: leg {i + 1}/{len(d.legs)} gagal setelah leg lain "
-                       f"ke-fill ({res.error}). Posisi TIDAK ter-hedge. Bot di-STOP.")
+                       f"ke-fill ({res.error}). Posisi TIDAK ter-hedge. "
+                       + ("Bot di-STOP." if mode == "live" else "(paper: dicatat, bot jalan terus)"))
                 if mode == "live":
                     self.db.set_meta("kill", msg)
                 self.db.log("error", "executor", msg)

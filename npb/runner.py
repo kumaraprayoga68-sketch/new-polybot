@@ -6,6 +6,7 @@ TAPI error-nya harus kelihatan (log DB + Telegram, diredam 1 jam per sumber).
 """
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -35,8 +36,10 @@ class Bot:
 
             live = LiveBroker(CLOB_URL, settings.private_key, settings.funder_address,
                               settings.chain_id, settings.signature_type)
-        self.executor = Executor(settings, self.db, live, self.tg.send)
+        self.executor = Executor(settings, self.db, live, self.tg.send, api=self.api)
         self.copytrade = Copytrade(settings, self.api, self.db)
+        self.copytrade.mode_for = self.executor.mode_for
+        self.copytrade.on_error = self._error
         self.arbitrage = Arbitrage(settings, self.api, self.db)
         self._alerted: dict[str, float] = {}
         self.stop_event = threading.Event()
@@ -74,8 +77,16 @@ class Bot:
         return lines
 
     def resolve(self, budget: int = 300) -> int:
+        """Cek settle, end date paling lama dulu. Kalau yang belum settle > budget,
+        giliran digeser tiap siklus — dulu 300 market yang sama dicek terus dan
+        sisanya gak pernah kebagian."""
+        ids = self.db.unresolved_condition_ids()
+        if len(ids) > budget:
+            off = int(self.db.get_meta("resolve:offset", "0") or 0) % len(ids)
+            ids = (ids[off:] + ids[:off])[:budget]
+            self.db.set_meta("resolve:offset", str(off + budget))
         n = 0
-        for cid in self.db.unresolved_condition_ids()[:budget]:
+        for cid in ids:
             p = payouts(self.api.market(cid, fresh=True))
             if p is not None:
                 self.db.set_resolution(cid, p)
@@ -89,6 +100,25 @@ class Bot:
                 self.db.add_mark(sig["id"], h, self.api.midpoint(sig["token_id"]))
                 n += 1
         return n
+
+    def mark_to_market(self, force: bool = False) -> None:
+        """Nilai posisi terbuka di mid sekarang -> PnL belum-realized per mode.
+        Dipakai rem rugi 24 jam di executor (posisi minus besar yang belum settle
+        juga harus ngerem order baru)."""
+        every = self.s.risk.mtm_interval_min * 60
+        if not force and time.time() - float(self.db.get_meta("mtm:last", "0") or 0) < every:
+            return
+        self.db.set_meta("mtm:last", str(time.time()))
+        for mode in ("paper", "live"):
+            total, priced = 0.0, 0
+            for pos in self.db.open_positions(mode):
+                mid = self.api.midpoint(pos["token_id"])
+                if mid is None:
+                    continue          # gak ada harga: lewati, jangan tebak
+                total += pos["shares"] * mid - pos["cost"]
+                priced += 1
+            self.db.set_meta(f"mtm:{mode}", json.dumps(
+                {"ts": time.time(), "unrealized": total, "positions": priced}))
 
     def auto_demote(self) -> None:
         """Strategi live yang jelas rugi dicabut promosinya otomatis."""
@@ -120,6 +150,7 @@ class Bot:
                     self._step("copytrade.stats", self.copytrade.refresh_stats, self.log)
         settled = self._step("resolve", self.resolve) or 0
         self._step("marks", self.mark)
+        self._step("mtm", self.mark_to_market)
         self._step("gate", self.auto_demote)
         self.db.set_meta("last_cycle", str(time.time()))
         if settled:
@@ -146,7 +177,8 @@ class Bot:
         for mode in ("paper", "live"):
             exp = self.db.open_exposure(r.zombie_days, mode=mode)
             day = self.db.realized_pnl_since(time.time() - 86400, mode=mode)
-            lines.append(f"{mode}: eksposur ${exp:.2f}/{r.max_exposure_usd:.0f} · PnL 24j ${day:+.2f}")
+            lines.append(f"{mode}: eksposur ${exp:.2f}/{r.max_exposure_usd:.0f} · PnL 24j ${day:+.2f}"
+                         f" · belum-realized ${self.executor.unrealized(mode):+.2f}")
         for name in ("copytrade", "arbitrage"):
             lines.append(f"{name}: jalan di {self.executor.mode_for(name)}"
                          f"{' (PROMOTED)' if self.db.promoted(name) else ''}")
@@ -168,9 +200,11 @@ class Bot:
 
         def traders(_):
             rows = self.db.trader_stats()[:15]
-            return "\n".join(f"{r['wallet'][:10]}… n={r['markets']} edge {r['mean_edge']:+.3f} "
-                             f"t {r['t_stat']:.1f} shrunk {r['shrunk_edge']:+.3f}"
-                             for r in rows) or "belum ada data trader"
+            head = f"t minimum (koreksi multiple testing): {self.copytrade.required_t():.2f}\n"
+            return head + ("\n".join(
+                f"{r['wallet'][:10]}… n={r['markets']} edge {r['mean_edge']:+.3f} "
+                f"t {r['t_stat']:.1f} holdout {r['holdout_edge'] or 0:+.3f} (n={r['holdout_n'] or 0})"
+                for r in rows) or "belum ada data trader")
 
         return {
             "status": lambda _: self.status(),

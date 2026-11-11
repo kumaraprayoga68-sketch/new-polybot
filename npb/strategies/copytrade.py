@@ -7,15 +7,19 @@ Copytrade v2. Beda utama dari polybot:
    terbuka. Pertama kali lihat trader, histori-nya dilewati.
 3. Harga kita dibandingin harga trader: kalau kita bayar > harga trader +
    CT_MAX_SLIPPAGE, skip — edge-nya udah dimakan.
-4. Ukuran pakai Kelly dengan peluang = harga trader + edge trader (di-shrink),
-   dan biaya = harga rata-rata kita SETELAH fee & menyapu book.
+4. Ukuran pakai Kelly dengan peluang = harga trader + edge trader (di-shrink,
+   ternormalisasi ke harga), biaya = harga rata-rata kita SETELAH fee & menyapu
+   book, dan modal = bankroll dikurangi yang lagi nyangkut di posisi terbuka.
+   Kalau Kelly < ukuran order minimum, SKIP (bukan dibulatin ke atas).
 5. Mid saat sinyal dicatat, lalu diukur lagi +1j/+6j (marks) — sumber harga
    sama, jadi drift-nya bisa dipercaya.
 """
 from __future__ import annotations
 
 import json
+import math
 import time
+from statistics import NormalDist
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -59,6 +63,10 @@ class Copytrade:
         self.cfg = settings.copytrade
         self.api = api
         self.db = db
+        # Diisi runner: mode eksekusi (paper/live) buat strategi ini, dan
+        # pelapor error (log + Telegram). Default aman buat tes / CLI.
+        self.mode_for = lambda name: "paper"
+        self.on_error = lambda source, e: self.db.log("error", source, str(e))
 
     # ── pemilihan trader ────────────────────────────────────────────────────
     def stats_stale(self) -> bool:
@@ -70,10 +78,13 @@ class Copytrade:
         last = float(self.db.get_meta("ct:stats_at", "0") or 0)
         return time.time() - last > self.cfg.stats_refresh_hours * 3600
 
+    # Naikkan kalau cara ngukur trader berubah -> semua trader diukur ulang.
+    STATS_VERSION = "v2"
+
     def _pool_target(self) -> str:
         if self.cfg.manual_wallets:
-            return "manual:" + ",".join(sorted(self.cfg.manual_wallets))
-        return f"leaderboard:{self.cfg.leaderboard_pool}"
+            return f"{self.STATS_VERSION}:manual:" + ",".join(sorted(self.cfg.manual_wallets))
+        return f"{self.STATS_VERSION}:leaderboard:{self.cfg.leaderboard_pool}"
 
     def stats_progress(self) -> tuple[int, int]:
         """(sudah diukur, total) untuk putaran pengukuran yang lagi jalan."""
@@ -116,26 +127,61 @@ class Copytrade:
             self.db.set_meta("ct:stats_at", str(time.time()))
         return len(done)
 
+    def required_t(self) -> float:
+        """t minimum setelah koreksi multiple testing untuk jumlah kandidat sekarang.
+
+        300 kandidat diuji di t>=1.5 -> ~20 lolos murni karena hoki. Bonferroni
+        satu sisi: t >= z(1 - alpha/N). N=100 -> ~3.29, N=300 -> ~3.59."""
+        cfg = self.cfg
+        if cfg.family_alpha <= 0:
+            return cfg.min_trader_t
+        n = len(json.loads(self.db.get_meta("ct:pool", "[]") or "[]"))
+        n = max(n, len(self.db.trader_stats()), 1)
+        z = NormalDist().inv_cdf(1 - min(0.5, cfg.family_alpha / n))
+        return max(cfg.min_trader_t, z)
+
     def followed(self) -> dict[str, float]:
-        """wallet -> shrunk edge, cuma yang lulus syarat."""
+        """wallet -> edge ternormalisasi (shrunk), cuma yang lulus semua syarat:
+        cukup market, t lolos koreksi multiple testing, dan edge di holdout positif."""
+        cfg = self.cfg
+        need_t = self.required_t()
         out = {}
         for r in self.db.trader_stats():
-            if (r["markets"] >= self.cfg.min_trader_markets and r["t_stat"] >= self.cfg.min_trader_t
-                    and r["shrunk_edge"] > 0):
-                out[r["wallet"]] = r["shrunk_edge"]
-            if len(out) >= self.cfg.follow_top:
+            norm = r["norm_edge"]
+            if (r["markets"] >= cfg.min_trader_markets and r["t_stat"] >= need_t
+                    and r["shrunk_edge"] > 0 and norm is not None and norm > 0
+                    and (r["holdout_n"] or 0) >= cfg.min_holdout_markets
+                    and (r["holdout_edge"] or 0) > 0):
+                out[r["wallet"]] = norm
+            if len(out) >= cfg.follow_top:
                 break
         return out
 
     # ── sinyal ──────────────────────────────────────────────────────────────
-    def new_trades(self, wallet: str) -> list[dict]:
-        rows, _ = self.api.user_trades(wallet, limit=50)
-        stamps = [float(r.get("timestamp") or 0) for r in rows]
+    def new_trades(self, wallet: str) -> tuple[list[dict], float | None]:
+        """(trade BELI baru yang layak dicek, timestamp terbaru yang kelihatan).
+
+        Cursor TIDAK dimajuin di sini — decisions() yang majuin setelah semua
+        trade wallet ini selesai dievaluasi, biar error API di tengah gak bikin
+        sinyal hilang. Halaman berikutnya diambil selama semua baris masih
+        lebih baru dari cursor (trader yang aktif banget)."""
         last = self.db.trader_last_ts(wallet)
-        if stamps:
-            self.db.set_trader_last_ts(wallet, max(stamps + [last or 0]))
+        rows, cursor = self.api.user_trades(wallet, limit=100)
+        rows = list(rows)
+        pages = 1
+        while (cursor and last is not None and pages < self.cfg.max_trade_pages and rows
+               and min(float(r.get("timestamp") or 0) for r in rows) > last):
+            more, cursor = self.api.user_trades(wallet, limit=100, cursor=cursor)
+            if not more:
+                break
+            rows.extend(more)
+            pages += 1
+        stamps = [float(r.get("timestamp") or 0) for r in rows]
+        newest = max(stamps + [last or 0]) if stamps else last
         if last is None:
-            return []          # pertama kali lihat: jangan copy histori
+            if newest is not None:
+                self.db.set_trader_last_ts(wallet, newest)
+            return [], None        # pertama kali lihat: jangan copy histori
         now = time.time()
         out = []
         for r, ts in zip(rows, stamps):
@@ -149,9 +195,17 @@ class Copytrade:
                 continue
             if usdc >= self.cfg.min_trader_usdc:
                 out.append(r)
-        return out
+        out.sort(key=lambda r: float(r.get("timestamp") or 0))
+        return out, newest
 
-    def evaluate(self, wallet: str, edge: float, t: dict) -> Decision | None:
+    def free_bankroll(self) -> float:
+        """Bankroll dikurangi modal yang lagi nyangkut di posisi terbuka (mode strategi ini)."""
+        exp = self.db.open_exposure(self.s.risk.zombie_days, mode=self.mode_for(NAME))
+        return max(0.0, self.s.bankroll_usd - exp)
+
+    def evaluate(self, wallet: str, edge: float, t: dict,
+                 bankroll: float | None = None) -> Decision | None:
+        """`edge` = edge ternormalisasi trader (lihat traders.py)."""
         cfg = self.cfg
         cid = t.get("condition_id") or t.get("conditionId") or ""
         tok = str(t.get("token_id") or t.get("asset") or "")
@@ -183,18 +237,26 @@ class Copytrade:
         if book is None or book.best_ask is None:
             return skip("order book kosong")
         fee_rate = rate_from_bps(m.get("taker_base_fee"), self.s.fees.rate_override)
-        p_est = min(0.99, max(0.01, trader_price + edge))
+        tp = min(0.99, max(0.01, trader_price))
+        p_est = min(0.99, max(0.01, trader_price + edge * math.sqrt(tp * (1 - tp))))
         mk = dict(mid=book.mid, ask=book.best_ask)
+        bankroll = self.free_bankroll() if bankroll is None else bankroll
+        if bankroll <= 0:
+            return skip("bankroll habis (semua nyangkut di posisi terbuka)", **mk)
 
         # dua putaran: tebak size di best ask, simulasi, ulang pakai biaya rata-rata.
         cost = book.best_ask
         shares = 0.0
         for _ in range(2):
-            shares = kelly_shares(p_est, cost, self.s.bankroll_usd, cfg.kelly_fraction)
+            shares = kelly_shares(p_est, cost, bankroll, cfg.kelly_fraction)
             shares = min(shares, self.s.risk.max_order_usd / max(cost, 1e-6) * 0.98)
             if shares <= 0:
                 return skip(f"Kelly 0 (p_est {p_est:.3f} <= biaya {cost:.3f})", **mk)
-            shares = max(shares, book.min_order_size)
+            if shares < book.min_order_size:
+                # Dulu dibulatin ke atas ke min size = taruhan lebih gede dari Kelly
+                # (bisa 5x) dan bisa nembus hard cap. Kekecilan = gak usah ikut.
+                return skip(f"Kelly {shares:.2f} share < order minimum "
+                            f"{book.min_order_size:g}", **mk)
             fill = book.buy(shares, fee_rate)
             if fill is None:
                 return skip("depth gak cukup", **mk)
@@ -221,10 +283,23 @@ class Copytrade:
             log("[copytrade] belum ada trader yang lulus syarat skill — gak ada sinyal.")
             return []
         out, tokens = [], set()
+        bankroll = self.free_bankroll()
         for wallet, edge in follow.items():
-            for t in self.new_trades(wallet):
-                d = self.evaluate(wallet, edge, t)
-                if d and d.legs[0].token_id not in tokens:
-                    tokens.add(d.legs[0].token_id)
-                    out.append(d)
+            try:
+                trades, newest = self.new_trades(wallet)
+                for t in trades:
+                    d = self.evaluate(wallet, edge, t, bankroll)
+                    if d and d.legs[0].token_id not in tokens:
+                        tokens.add(d.legs[0].token_id)
+                        out.append(d)
+                        lg = d.legs[0]
+                        fill = lg.book.buy(lg.shares, lg.fee_rate)
+                        bankroll = max(0.0, bankroll - (fill.total if fill else 0.0))
+            except Exception as e:  # noqa: BLE001 — satu trader error gak boleh matiin yang lain
+                # Cursor gak dimajuin: trade-nya dicoba lagi siklus depan (signal_seen
+                # nyegah dobel, max_signal_age nyegah ngulang selamanya).
+                self.on_error("copytrade", RuntimeError(f"{wallet[:10]}…: {e}"))
+                continue
+            if newest is not None:
+                self.db.set_trader_last_ts(wallet, newest)
         return out

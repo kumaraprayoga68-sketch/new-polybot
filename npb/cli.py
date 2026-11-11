@@ -40,14 +40,24 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("resume")
     bk = sub.add_parser("backup", help="snapshot database ke file lain (aman saat bot jalan)")
     bk.add_argument("dest")
+    ex = sub.add_parser("export", help="tulis dashboard.json dari database")
+    ex.add_argument("dest")
     a = p.parse_args(argv)
 
     s = Settings.from_env()
-    if a.cmd == "backup":
+    if a.cmd in ("backup", "export"):
+        # Cuma baca DB — jangan bikin Bot (gak perlu API / broker live).
         from .db import DB
 
-        DB(s.db_path).backup_to(a.dest)
-        print(f"💾 {s.db_path} -> {a.dest}")
+        db = DB(s.db_path)
+        if a.cmd == "backup":
+            db.backup_to(a.dest)
+            print(f"💾 {s.db_path} -> {a.dest}")
+        else:
+            from . import export
+            from .strategies.copytrade import Copytrade
+
+            export.write(a.dest, db, s, Copytrade(s, None, db).followed())
         return 0
     bot = _bot(s)
 

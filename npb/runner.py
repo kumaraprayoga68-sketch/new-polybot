@@ -120,6 +120,7 @@ class Bot:
         settled = self._step("resolve", self.resolve) or 0
         self._step("marks", self.mark)
         self._step("gate", self.auto_demote)
+        self.db.set_meta("last_cycle", str(time.time()))
         if settled:
             self.log(f"✔️  {settled} market settle")
         if lines:

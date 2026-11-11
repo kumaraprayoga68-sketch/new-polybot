@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>new-polybot monitor</title>
+<style>
+  :root{
+    --bg:#0b0f14; --card:#131a23; --card2:#18212c; --line:#233041;
+    --tx:#e6edf5; --mut:#8494a7; --acc:#3ba3ff;
+    --green:#37d67a; --red:#ff5c6c; --amber:#ffb020; --purple:#b088ff; --blue:#4aa8ff;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--tx);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;padding-bottom:40px}
+  .wrap{max-width:980px;margin:0 auto;padding:16px}
+  header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:6px 0 14px}
+  .brand{display:flex;align-items:center;gap:10px;min-width:0}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--mut);flex:none}
+  h1{font:700 15px var(--mono);margin:0;letter-spacing:.5px}
+  h1 span{color:var(--mut);font-weight:400}
+  .sub{font:12px var(--mono);color:var(--mut);margin-top:3px}
+  button{background:var(--card2);color:var(--tx);border:1px solid var(--line);
+    border-radius:10px;padding:8px 12px;font:600 12px var(--mono);cursor:pointer;flex:none}
+  button:active{transform:scale(.97)}
+  .banner{border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13px;font-weight:600}
+  .banner.red{background:rgba(255,92,108,.12);border:1px solid var(--red);color:var(--red)}
+  .banner.amber{background:rgba(255,176,32,.1);border:1px solid var(--amber);color:var(--amber)}
+  .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
+  @media(min-width:700px){.tiles{grid-template-columns:repeat(5,1fr)}}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px 14px;min-width:0}
+  .k{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.6px}
+  .v{font:700 20px var(--mono);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .v small{font-size:11px;font-weight:500;color:var(--mut)}
+  h2{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;margin:20px 0 8px}
+  .gates{display:grid;grid-template-columns:1fr;gap:10px}
+  @media(min-width:700px){.gates{grid-template-columns:1fr 1fr}}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:13px 15px}
+  .card .head{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
+  .card .name{font:700 14px var(--mono)}
+  .bar{height:6px;background:var(--card2);border-radius:99px;overflow:hidden;margin:6px 0 10px}
+  .bar i{display:block;height:100%;background:var(--acc)}
+  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;font-size:12px;color:var(--mut)}
+  .stats b{display:block;font:600 14px var(--mono);color:var(--tx)}
+  .why{font-size:12px;color:var(--mut);margin-top:9px;line-height:1.5}
+  .badge{font:700 10px var(--mono);padding:3px 7px;border-radius:6px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap}
+  .b-green{background:rgba(55,214,122,.15);color:var(--green)}
+  .b-red{background:rgba(255,92,108,.15);color:var(--red)}
+  .b-amber{background:rgba(255,176,32,.15);color:var(--amber)}
+  .b-blue{background:rgba(74,168,255,.15);color:var(--blue)}
+  .b-purple{background:rgba(176,136,255,.15);color:var(--purple)}
+  .b-mut{background:rgba(132,148,167,.15);color:var(--mut)}
+  .tabs{display:flex;gap:6px;flex-wrap:wrap;margin:20px 0 10px}
+  .tab{font:600 12px var(--mono);padding:7px 12px;border-radius:999px;border:1px solid var(--line);
+    background:transparent;color:var(--mut)}
+  .tab.on{background:var(--acc);border-color:var(--acc);color:#04121f}
+  .list{display:flex;flex-direction:column;gap:8px}
+  .row{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 13px}
+  .row .top{display:flex;align-items:center;gap:8px;justify-content:space-between}
+  .row .l{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+  .time{font:11px var(--mono);color:var(--mut);white-space:nowrap}
+  .mkt{font-size:14px;font-weight:600;margin:7px 0 4px;line-height:1.3;word-break:break-word}
+  .meta{font:12px var(--mono);color:var(--mut);display:flex;flex-wrap:wrap;gap:4px 14px}
+  .meta b{color:var(--tx);font-weight:600}
+  .pos{color:var(--green)!important}.neg{color:var(--red)!important}
+  .tbl{width:100%;border-collapse:collapse;font:12px var(--mono)}
+  .tbl th{color:var(--mut);font-weight:500;text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+  .tbl td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--line)}
+  .tbl th:first-child,.tbl td:first-child{text-align:left}
+  .scroll{overflow-x:auto}
+  .empty,.err{text-align:center;color:var(--mut);padding:34px 10px;font-size:13px;line-height:1.6}
+  .err{color:var(--red)}
+  .foot{text-align:center;color:var(--mut);font:11px var(--mono);margin-top:22px;line-height:1.7}
+  code{font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <span class="dot" id="dot"></span>
+      <div style="min-width:0">
+        <h1>NEW-POLYBOT <span>// MONITOR</span></h1>
+        <div class="sub" id="sub">memuat…</div>
+      </div>
+    </div>
+    <button id="refresh">↻ REFRESH</button>
+  </header>
+
+  <div id="banners"></div>
+  <div class="tiles" id="tiles"></div>
+
+  <h2 id="gatesH" hidden>Gerbang live</h2>
+  <div class="gates" id="gates"></div>
+
+  <div id="calib"></div>
+
+  <div class="tabs" id="tabs"></div>
+  <div id="panel"><div class="empty">memuat data…</div></div>
+
+  <div class="foot">
+    sumber: branch <code>data</code> · dashboard.json (repo public) · update tiap ~5 mnt · auto-refresh 60 dtk<br>
+    paper trading / simulasi · bukan financial advice
+  </div>
+</div>
+
+<script>
+// ?src=... buat nguji pakai file lain (mis. hasil `npb export` lokal).
+const DATA_URL = new URLSearchParams(location.search).get("src")
+  || "https://raw.githubusercontent.com/kumaraprayoga68-sketch/new-polybot/data/dashboard.json";
+let D = null, TAB = "bets";
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const usd = (x, sign) => (x == null ? "—" : (sign && x > 0 ? "+" : "") + (x < 0 ? "-$" : "$") + Math.abs(x).toFixed(2));
+const pct = (x, sign = true) => (x == null ? "—" : (sign && x > 0 ? "+" : "") + (x * 100).toFixed(2) + "%");
+const cls = x => (x > 0 ? "pos" : x < 0 ? "neg" : "");
+function ago(ts) {
+  if (!ts) return "belum pernah";
+  const s = Math.floor(Date.now() / 1000 - ts);
+  if (s < 60) return s + " dtk lalu";
+  if (s < 3600) return Math.floor(s / 60) + " mnt lalu";
+  if (s < 86400) return Math.floor(s / 3600) + " jam lalu";
+  return Math.floor(s / 86400) + " hari lalu";
+}
+
+function renderTop() {
+  const age = D.last_cycle ? Date.now() / 1000 - D.last_cycle : Infinity;
+  $("dot").style.background = age < 600 ? "var(--green)" : age < 3600 ? "var(--amber)" : "var(--red)";
+  $("dot").style.boxShadow = age < 600 ? "0 0 10px var(--green)" : "none";
+  $("sub").textContent = `siklus terakhir ${ago(D.last_cycle)} · data ${ago(D.generated_at)}`;
+
+  const b = [];
+  if (D.killed) b.push(`<div class="banner red">⛔ KILL SWITCH aktif: ${esc(D.killed)} — order baru berhenti</div>`);
+  if (age >= 3600) b.push(`<div class="banner amber">⚠️ Bot gak jalan ${ago(D.last_cycle)}. Cek tab Actions di GitHub.</div>`);
+  if (D.live_requested) b.push(`<div class="banner amber">🔴 Mode LIVE diminta — cuma strategi yang di-promote yang pakai duit beneran</div>`);
+  $("banners").innerHTML = b.join("");
+
+  const open = D.bets.filter(x => !x.resolved).length;
+  const c = D.signal_counts_24h || {};
+  const take = Object.entries(c).filter(([k]) => k.endsWith(":take")).reduce((a, [, v]) => a + v, 0);
+  const skip = Object.entries(c).filter(([k]) => k.endsWith(":skip")).reduce((a, [, v]) => a + v, 0);
+  const tiles = [
+    ["Mode", D.mode.toUpperCase(), D.live_requested ? "live diminta" : "aman"],
+    ["Eksposur paper", usd(D.exposure.paper), `/ $${D.risk.max_exposure_usd}`],
+    ["PnL 24j paper", `<span class="${cls(D.pnl_24h.paper)}">${usd(D.pnl_24h.paper, true)}</span>`, ""],
+    ["Bet terbuka", open, `dari ${D.bets.length} terakhir`],
+    ["Sinyal 24j", take, `ikut · ${skip} skip`],
+  ];
+  $("tiles").innerHTML = tiles.map(([k, v, s]) =>
+    `<div class="tile"><div class="k">${k}</div><div class="v">${v} <small>${s}</small></div></div>`).join("");
+}
+
+function renderGates() {
+  $("gatesH").hidden = false;
+  const g = D.gate;
+  $("gates").innerHTML = ["copytrade", "arbitrage"].map(name => {
+    const p = D.scores.find(s => s.strategy === name && s.mode === "paper");
+    const l = D.scores.find(s => s.strategy === name && s.mode === "live");
+    const prog = Math.min(1, p.n_resolved / g.min_resolved);
+    const status = D.promoted[name] ? `<span class="badge b-purple">promoted · live</span>`
+      : p.passed ? `<span class="badge b-green">lulus</span>` : `<span class="badge b-mut">belum lulus</span>`;
+    const live = l && l.n_total ? `<div class="why">live: ${l.n_resolved}/${l.n_total} settle · PnL
+      <b class="${cls(l.pnl)}">${usd(l.pnl, true)}</b> · ROI ${pct(l.roi)}</div>` : "";
+    return `<div class="card">
+      <div class="head"><span class="name">${name}</span>${status}</div>
+      <div class="k">${p.n_resolved} / ${g.min_resolved} settle · ${p.n_total} bet total</div>
+      <div class="bar"><i style="width:${(prog * 100).toFixed(1)}%"></i></div>
+      <div class="stats">
+        <div>PnL<b class="${cls(p.pnl)}">${usd(p.pnl, true)}</b></div>
+        <div>ROI (CI95)<b class="${cls(p.roi)}">${pct(p.roi)}</b>
+          <span style="font-size:11px">${pct(p.roi_ci[0])} .. ${pct(p.roi_ci[1])}</span></div>
+        <div>t-stat<b>${p.t.toFixed(2)}</b><span style="font-size:11px">butuh ≥ ${g.min_t_stat}</span></div>
+      </div>
+      <div class="why">${p.passed ? "✅ semua syarat terpenuhi" : "⛔ " + p.reasons.map(esc).join(" · ")}</div>
+      ${live}
+    </div>`;
+  }).join("");
+}
+
+function renderCalib() {
+  const p = D.scores.find(s => s.strategy === "copytrade" && s.mode === "paper");
+  if (!p || !p.buckets.length) { $("calib").innerHTML = ""; return; }
+  $("calib").innerHTML = `<h2>Kalibrasi copytrade (paper)</h2>
+    <div class="card scroll"><table class="tbl">
+      <tr><th>harga beli</th><th>n</th><th>harga rata2</th><th>menang</th><th>selisih</th><th>PnL</th></tr>
+      ${p.buckets.map(b => {
+        const edge = b.win_rate - b.avg_price;
+        return `<tr><td>${b.lo.toFixed(1)}–${b.hi.toFixed(1)}</td><td>${b.n}</td>
+          <td>${b.avg_price.toFixed(3)}</td><td>${(b.win_rate * 100).toFixed(1)}%</td>
+          <td class="${cls(edge)}">${edge > 0 ? "+" : ""}${(edge * 100).toFixed(1)}pt</td>
+          <td class="${cls(b.pnl)}">${usd(b.pnl, true)}</td></tr>`;
+      }).join("")}
+    </table>
+    <div class="why">Kalau "menang" ≈ "harga rata2" di semua baris, strategi gak tahu lebih banyak dari pasar.</div></div>`;
+}
+
+const TABS = { bets: "Bet", signals: "Sinyal", traders: "Trader", drift: "Drift", errors: "Error" };
+
+function renderTabs() {
+  const errN = D.errors.filter(e => e.level === "error").length;
+  $("tabs").innerHTML = Object.entries(TABS).map(([k, v]) =>
+    `<button class="tab ${TAB === k ? "on" : ""}" data-t="${k}">${v}${k === "errors" && errN ? ` (${errN})` : ""}</button>`).join("");
+  document.querySelectorAll(".tab").forEach(t => t.onclick = () => { TAB = t.dataset.t; renderTabs(); renderPanel(); });
+}
+
+function renderPanel() {
+  const P = $("panel");
+  const empty = msg => (P.innerHTML = `<div class="empty">${msg}</div>`);
+  if (TAB === "bets") {
+    if (!D.bets.length) return empty("Belum ada bet. Normal kalau belum ada trader yang lulus syarat skill atau peluang arbitrage setelah fee.");
+    P.innerHTML = `<div class="list">${D.bets.map(x => {
+      const st = !x.resolved ? ["b-blue", "open"] : x.pnl >= 0 ? ["b-green", "menang"] : ["b-red", "kalah"];
+      const price = x.avg_price != null ? ` @ ${x.avg_price.toFixed(3)}` : "";
+      return `<div class="row"><div class="top"><span class="l">
+          <span class="badge ${st[0]}">${st[1]}</span>
+          <span class="badge ${x.strategy === "arbitrage" ? "b-purple" : "b-mut"}">${esc(x.strategy)}</span>
+          ${x.mode === "live" ? '<span class="badge b-red">live</span>' : ""}</span>
+          <span class="time">${ago(x.ts)}</span></div>
+        <div class="mkt">${esc(x.market)}</div>
+        <div class="meta"><span>🎯 <b>${esc(x.outcome)}</b>${price}</span>
+          <span>💵 <b>${usd(x.cost)}</b> (fee ${usd(x.fee)})</span>
+          ${x.resolved ? `<span>PnL <b class="${cls(x.pnl)}">${usd(x.pnl, true)}</b></span>` : `<span>📅 ${esc(x.end_date || "—")}</span>`}
+        </div></div>`;
+    }).join("")}</div>`;
+  } else if (TAB === "signals") {
+    if (!D.signals.length) return empty("Belum ada sinyal.");
+    P.innerHTML = `<div class="list">${D.signals.map(s => `<div class="row">
+      <div class="top"><span class="l">
+        <span class="badge ${s.decision === "take" ? "b-green" : "b-amber"}">${s.decision === "take" ? "ikut" : "skip"}</span>
+        <span class="badge ${s.strategy === "arbitrage" ? "b-purple" : "b-mut"}">${esc(s.strategy)}</span></span>
+        <span class="time">${ago(s.ts)}</span></div>
+      <div class="mkt">${esc(s.market || "—")}</div>
+      <div class="meta">
+        ${s.outcome ? `<span>🎯 <b>${esc(s.outcome)}</b></span>` : ""}
+        ${s.ref_price != null ? `<span>trader <b>${s.ref_price.toFixed(3)}</b></span>` : ""}
+        ${s.ask != null ? `<span>ask <b>${s.ask.toFixed(3)}</b></span>` : ""}
+        ${s.edge_est != null ? `<span>edge <b class="${cls(s.edge_est)}">${s.edge_est.toFixed(3)}</b></span>` : ""}
+        <span>${esc(s.reason)}</span></div></div>`).join("")}</div>`;
+  } else if (TAB === "traders") {
+    if (!D.traders.length) return empty("Skill trader belum diukur. Run pertama butuh beberapa menit.");
+    P.innerHTML = `<div class="card scroll"><div class="why" style="margin:0 0 8px">
+      diukur ${ago(D.traders_measured_at)} · edge = rata-rata (hasil 0/1 − harga beli) per market settle ·
+      diikuti kalau t ≥ syarat & cukup market</div>
+      <table class="tbl"><tr><th>wallet</th><th>market</th><th>edge</th><th>t</th><th>shrunk</th><th></th></tr>
+      ${D.traders.map(t => `<tr><td><a style="color:var(--acc)" target="_blank" rel="noopener"
+        href="https://polymarket.com/profile/${esc(t.wallet)}">${esc(t.wallet.slice(0, 10))}…</a></td>
+        <td>${t.markets}</td><td class="${cls(t.mean_edge)}">${t.mean_edge.toFixed(3)}</td>
+        <td>${t.t_stat.toFixed(2)}</td><td class="${cls(t.shrunk_edge)}">${t.shrunk_edge.toFixed(3)}</td>
+        <td>${t.followed ? '<span class="badge b-green">diikuti</span>' : ""}</td></tr>`).join("")}
+      </table></div>`;
+  } else if (TAB === "drift") {
+    if (!D.drift.length) return empty("Belum ada pengukuran drift (butuh sinyal yang umurnya ≥ 1 jam).");
+    P.innerHTML = `<div class="card scroll"><table class="tbl">
+      <tr><th>strategi</th><th>keputusan</th><th>horizon</th><th>n</th><th>drift mid rata2</th></tr>
+      ${D.drift.map(d => `<tr><td>${esc(d.strategy)}</td><td>${esc(d.decision)}</td><td>+${d.horizon_h}j</td>
+        <td>${d.n}</td><td class="${cls(d.avg_drift)}">${(d.avg_drift * 100).toFixed(2)}¢</td></tr>`).join("")}
+      </table><div class="why">Perubahan harga tengah setelah sinyal. Positif = harga naik ke arah yang kita beli.</div></div>`;
+  } else {
+    if (!D.errors.length) return empty("Gak ada error. 👍");
+    P.innerHTML = `<div class="list">${D.errors.map(e => `<div class="row">
+      <div class="top"><span class="l"><span class="badge ${e.level === "error" ? "b-red" : "b-amber"}">${esc(e.level)}</span>
+        <span class="badge b-mut">${esc(e.source)}</span></span><span class="time">${ago(e.ts)}</span></div>
+      <div class="meta" style="margin-top:6px;word-break:break-word">${esc(e.message)}</div></div>`).join("")}</div>`;
+  }
+}
+
+async function load() {
+  $("dot").style.background = "var(--amber)";
+  try {
+    const r = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" });
+    if (r.status === 404) {
+      $("dot").style.background = "var(--mut)";
+      $("sub").textContent = "belum ada data";
+      $("panel").innerHTML = `<div class="empty">Bot belum pernah publish data.<br>
+        Jalankan workflow <b>bot 24/7 (paper)</b> di tab Actions repo new-polybot,<br>data muncul ±2 menit setelahnya.</div>`;
+      return;
+    }
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    D = await r.json();
+    renderTop(); renderGates(); renderCalib(); renderTabs(); renderPanel();
+  } catch (e) {
+    $("dot").style.background = "var(--red)";
+    $("sub").textContent = "gagal memuat";
+    $("panel").innerHTML = `<div class="err">Gagal ambil data.<br>${esc(e.message)}</div>`;
+  }
+}
+$("refresh").onclick = load;
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

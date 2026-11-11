@@ -94,6 +94,7 @@ class CopytradeSettings:
     min_trader_t: float = 2.0
     shrink_k: float = 30.0
     stats_refresh_hours: float = 12.0
+    stats_batch: int = 8             # trader yang diukur per siklus (dicicil)
     max_resolution_lookups: int = 150
     # Sinyal: cuma trade BARU, gak lebih tua dari ini.
     max_signal_age_sec: int = 600
@@ -177,6 +178,7 @@ class Settings:
                 min_trader_t=_f("CT_MIN_TRADER_T", 2.0),
                 shrink_k=_f("CT_SHRINK_K", 30.0),
                 stats_refresh_hours=_f("CT_STATS_REFRESH_HOURS", 12.0),
+                stats_batch=_i("CT_STATS_BATCH", 8),
                 max_resolution_lookups=_i("CT_MAX_RESOLUTION_LOOKUPS", 150),
                 max_signal_age_sec=_i("CT_MAX_SIGNAL_AGE_SEC", 600),
                 min_trader_usdc=_f("CT_MIN_TRADER_USDC", 50.0),

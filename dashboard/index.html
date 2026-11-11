@@ -245,9 +245,11 @@ function renderPanel() {
         ${s.edge_est != null ? `<span>edge <b class="${cls(s.edge_est)}">${s.edge_est.toFixed(3)}</b></span>` : ""}
         <span>${esc(s.reason)}</span></div></div>`).join("")}</div>`;
   } else if (TAB === "traders") {
-    if (!D.traders.length) return empty("Skill trader belum diukur. Run pertama butuh beberapa menit.");
+    const [pi, pn] = D.traders_progress || [0, 0];
+    const prog = pn && pi < pn ? `pengukuran berjalan ${pi}/${pn}` : `putaran terakhir selesai ${ago(D.traders_measured_at)}`;
+    if (!D.traders.length) return empty(`Skill trader belum diukur (${prog}).`);
     P.innerHTML = `<div class="card scroll"><div class="why" style="margin:0 0 8px">
-      diukur ${ago(D.traders_measured_at)} · edge = rata-rata (hasil 0/1 − harga beli) per market settle ·
+      ${prog} · edge = rata-rata (hasil 0/1 − harga beli) per market settle ·
       diikuti kalau t ≥ syarat & cukup market</div>
       <table class="tbl"><tr><th>wallet</th><th>market</th><th>edge</th><th>t</th><th>shrunk</th><th></th></tr>
       ${D.traders.map(t => `<tr><td><a style="color:var(--acc)" target="_blank" rel="noopener"

@@ -76,7 +76,9 @@ def main(argv: list[str] | None = None) -> int:
             print(scorecard.format_score(scorecard.score(bot.db, name, s.gate, a.mode)))
             print()
     elif a.cmd == "traders":
-        bot.copytrade.refresh_stats()
+        bot.copytrade.refresh_stats()          # mulai putaran (atau lanjutin)
+        while bot.copytrade.stats_progress()[0] < bot.copytrade.stats_progress()[1]:
+            bot.copytrade.refresh_stats()
         for r in bot.db.trader_stats()[:25]:
             print(f"{r['wallet']} n={r['markets']:<4} edge {r['mean_edge']:+.4f} "
                   f"t {r['t_stat']:5.2f} shrunk {r['shrunk_edge']:+.4f}")

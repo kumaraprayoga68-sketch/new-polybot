@@ -108,15 +108,16 @@ class Bot:
         if killed:
             self.log(f"⛔ kill switch aktif ({killed}) — cuma settle & ukur.")
         else:
-            if self.s.copytrade.enabled:
-                if self.copytrade.stats_stale():
-                    self._step("copytrade.stats", self.copytrade.refresh_stats, self.log)
-                lines += self._step("copytrade", self.run_decisions, self.copytrade) or []
             if self.s.arbitrage.enabled:
                 last = float(self.db.get_meta("arb:last_scan", "0") or 0)
                 if time.time() - last >= self.s.arbitrage.scan_interval_min * 60:
                     self.db.set_meta("arb:last_scan", str(time.time()))
                     lines += self._step("arbitrage", self.run_decisions, self.arbitrage) or []
+            if self.s.copytrade.enabled:
+                lines += self._step("copytrade", self.run_decisions, self.copytrade) or []
+                # Dicicil di akhir siklus, biar gak nahan sinyal dari trader yang udah diikuti.
+                if self.copytrade.stats_stale():
+                    self._step("copytrade.stats", self.copytrade.refresh_stats, self.log)
         settled = self._step("resolve", self.resolve) or 0
         self._step("marks", self.mark)
         self._step("gate", self.auto_demote)

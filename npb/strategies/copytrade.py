@@ -14,6 +14,7 @@ Copytrade v2. Beda utama dari polybot:
 """
 from __future__ import annotations
 
+import json
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -61,24 +62,49 @@ class Copytrade:
 
     # ── pemilihan trader ────────────────────────────────────────────────────
     def stats_stale(self) -> bool:
+        i, n = self.stats_progress()
+        if i < n:
+            return True          # putaran pengukuran belum kelar
         last = float(self.db.get_meta("ct:stats_at", "0") or 0)
         return time.time() - last > self.cfg.stats_refresh_hours * 3600
 
-    def refresh_stats(self, log=print) -> int:
-        pool = list(self.cfg.manual_wallets) or self.api.leaderboard(self.cfg.leaderboard_pool)
-        log(f"[copytrade] ngukur skill {len(pool)} trader…")
+    def stats_progress(self) -> tuple[int, int]:
+        """(sudah diukur, total) untuk putaran pengukuran yang lagi jalan."""
+        pool = json.loads(self.db.get_meta("ct:pool", "[]") or "[]")
+        return int(self.db.get_meta("ct:pool_i", "0") or 0), len(pool)
+
+    def refresh_stats(self, log=print, batch: int | None = None) -> int:
+        """Ukur skill trader secara DICICIL: `batch` trader per panggilan.
+
+        Ngukur 100 trader sekaligus makan 30+ menit dan nahan siklus pertama —
+        selama itu gak ada sinyal, gak ada scan arbitrage, dashboard kosong.
+        Sekarang tiap siklus ngukur sebagian; putaran baru dimulai setelah
+        putaran lama kelar DAN sudah lewat CT_STATS_REFRESH_HOURS.
+        """
+        batch = batch or self.cfg.stats_batch
+        i, n = self.stats_progress()
+        if i >= n:
+            pool = list(self.cfg.manual_wallets) or self.api.leaderboard(self.cfg.leaderboard_pool)
+            self.db.set_meta("ct:pool", json.dumps([w.lower() for w in pool]))
+            i, n = 0, len(pool)
+            self.db.set_meta("ct:pool_i", "0")
+        pool = json.loads(self.db.get_meta("ct:pool", "[]") or "[]")
+        chunk = pool[i:i + batch]
+        log(f"[copytrade] ngukur skill trader {i + 1}-{i + len(chunk)} dari {n}…")
 
         def one(w):
             try:
-                return traders.measure(self.api, self.db, w.lower(), self.cfg.shrink_k,
+                return traders.measure(self.api, self.db, w, self.cfg.shrink_k,
                                        self.cfg.max_resolution_lookups)
             except Exception as e:  # noqa: BLE001
                 self.db.log("warn", "traders", f"{w}: {e}")
                 return None
 
         with ThreadPoolExecutor(max_workers=6) as ex:
-            done = [s for s in ex.map(one, pool) if s]
-        self.db.set_meta("ct:stats_at", str(time.time()))
+            done = [s for s in ex.map(one, chunk) if s]
+        self.db.set_meta("ct:pool_i", str(i + len(chunk)))
+        if i + len(chunk) >= n:
+            self.db.set_meta("ct:stats_at", str(time.time()))
         return len(done)
 
     def followed(self) -> dict[str, float]:

@@ -91,3 +91,16 @@ def test_size_capped_by_hard_cap(api, db, settings):
     api.trades[W] = [trade()]
     d = ct.decisions(log=lambda *_: None)[0]
     assert d.legs[0].shares * 0.41 <= settings.risk.max_order_usd
+
+
+def test_stats_measured_in_batches(api, db, settings):
+    for i in range(5):
+        api.trades[f"0xw{i}"] = []
+    ct = Copytrade(settings, api, db)
+    assert ct.stats_stale()
+    ct.refresh_stats(log=lambda *_: None, batch=2)
+    assert ct.stats_progress() == (2, 5) and ct.stats_stale()
+    ct.refresh_stats(log=lambda *_: None, batch=2)
+    ct.refresh_stats(log=lambda *_: None, batch=2)
+    assert ct.stats_progress() == (5, 5)
+    assert not ct.stats_stale()          # putaran kelar, belum lewat refresh_hours

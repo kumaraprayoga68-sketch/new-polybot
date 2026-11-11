@@ -86,6 +86,8 @@ def build(db: DB, settings: Settings, followed: dict[str, float] | None = None) 
         "drift": _drift(db),
         "traders": traders,
         "traders_measured_at": float(db.get_meta("ct:stats_at", "0") or 0),
+        "traders_progress": [int(db.get_meta("ct:pool_i", "0") or 0),
+                             len(json.loads(db.get_meta("ct:pool", "[]") or "[]"))],
         "errors": errors,
     }
 

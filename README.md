@@ -82,6 +82,14 @@ Cara nyalain:
    dan `TELEGRAM_CHAT_ID`.
 2. Tab Actions → **bot 24/7 (paper)** → Run workflow.
 
+### Dashboard web
+
+**https://kumaraprayoga68-sketch.github.io/new-polybot/** — status bot, progres gerbang
+live, kalibrasi, bet, sinyal, trader, drift, dan error. Halaman statis di `dashboard/`,
+di-publish ke GitHub Pages oleh [`pages.yml`](.github/workflows/pages.yml); datanya
+`dashboard.json` di branch `data` (update tiap ~5 menit, auto-refresh 60 detik).
+Sekali aja: Settings → Pages → Source: **GitHub Actions**.
+
 Repo ini public, jadi isi branch `data` (riwayat paper trading) ikut kelihatan publik.
 Kunci wallet **jangan pernah** ditaruh di secrets repo ini — live jalan di mesin sendiri.
 

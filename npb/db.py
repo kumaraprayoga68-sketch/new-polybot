@@ -152,6 +152,17 @@ class DB:
         with self._lock:
             return self.conn.execute(sql, params).fetchall()
 
+    def backup_to(self, dest: str) -> None:
+        """Snapshot konsisten (aman walau bot lagi nulis) ke satu file tanpa WAL."""
+        os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+        out = sqlite3.connect(dest)
+        try:
+            with self._lock:
+                self.conn.backup(out)
+            out.execute("PRAGMA journal_mode=DELETE")
+        finally:
+            out.close()
+
     # ── meta / flags ─────────────────────────────────────────────────────────
     def get_meta(self, key: str, default: str | None = None) -> str | None:
         rows = self.query("SELECT value FROM meta WHERE key=?", (key,))

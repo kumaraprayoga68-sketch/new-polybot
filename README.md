@@ -64,6 +64,27 @@ pytest -q
 
 Telegram: `/status /score /traders /kill [alasan] /resume`.
 
+## Jalan 24/7 di GitHub Actions
+
+Workflow [`bot.yml`](.github/workflows/bot.yml) menjalankan bot (selalu **paper**) tanpa
+server:
+
+- Satu job hidup ~5,5 jam, lalu memicu dirinya sendiri lagi. Cron tiap 6 jam jadi
+  cadangan kalau pemicu itu gagal; run baru cuma antre, gak membunuh yang lagi jalan.
+- Database disimpan di branch **`data`** (`npb.db.gz`, plus `npb.prev.db.gz` = kondisi
+  awal run sebelumnya buat rollback). Checkpoint tiap 30 menit, branch di-force-push
+  jadi selalu 1 commit.
+- Kalau bot mati dalam < 30 menit, job dibikin merah dan **gak** di-restart, biar
+  error-nya kelihatan.
+
+Cara nyalain:
+1. (Opsional) Settings → Secrets and variables → Actions → isi `TELEGRAM_BOT_TOKEN`
+   dan `TELEGRAM_CHAT_ID`.
+2. Tab Actions → **bot 24/7 (paper)** → Run workflow.
+
+Repo ini public, jadi isi branch `data` (riwayat paper trading) ikut kelihatan publik.
+Kunci wallet **jangan pernah** ditaruh di secrets repo ini — live jalan di mesin sendiri.
+
 ## Jalan ke live (sengaja ribet)
 
 1. Strategi jalan di paper sampai `npb score` bilang **LULUS**: ≥ 200 group settle,

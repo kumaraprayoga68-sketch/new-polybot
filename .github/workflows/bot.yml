@@ -1,0 +1,110 @@
+name: bot 24/7 (paper)
+
+# Bot jalan terus di GitHub Actions (gratis tanpa batas karena repo public).
+#
+# Satu job hidup ~5,5 jam (batas Actions 6 jam), lalu nge-dispatch dirinya sendiri.
+# Database SQLite disimpan di branch `data` (npb.db.gz + snapshot sebelumnya
+# npb.prev.db.gz), di-checkpoint tiap 30 menit. Branch itu di-force-push jadi
+# cuma 1 commit — repo gak membengkak.
+#
+# SELALU paper. Wallet/kunci live JANGAN pernah ditaruh di secrets repo ini.
+#
+# Secrets (Settings -> Secrets and variables -> Actions), opsional:
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+on:
+  workflow_dispatch: {}
+  schedule:
+    # Jaring pengaman kalau self-dispatch gagal. Gak bunuh run yang lagi jalan
+    # (cancel-in-progress: false) — cuma antre di belakangnya.
+    - cron: "23 */6 * * *"
+
+permissions:
+  contents: write   # push snapshot DB ke branch data
+  actions: write    # dispatch diri sendiri
+
+concurrency:
+  group: npb-bot
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      NPB_MODE: paper
+      LIVE_TRADING_ENABLED: "false"
+      NPB_DB_PATH: data/npb.db
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      RUN_MINUTES: "330"
+      CHECKPOINT_MINUTES: "30"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -e .
+
+      - name: Pulihkan database dari branch data
+        run: |
+          mkdir -p data
+          if git fetch --depth 1 origin data 2>/dev/null; then
+            git show FETCH_HEAD:npb.db.gz | gunzip > data/npb.db
+            git show FETCH_HEAD:npb.db.gz > /tmp/prev.db.gz
+            echo "DB dipulihkan: $(du -h data/npb.db | cut -f1)"
+          else
+            echo "Branch data belum ada — mulai DB baru."
+          fi
+
+      - name: Jalankan bot + checkpoint berkala
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          save() {
+            python -m npb backup /tmp/snap.db || return 1
+            gzip -9 -c /tmp/snap.db > /tmp/npb.db.gz
+            rm -rf /tmp/datawt && mkdir -p /tmp/datawt
+            cp /tmp/npb.db.gz /tmp/datawt/
+            [ -f /tmp/prev.db.gz ] && cp /tmp/prev.db.gz /tmp/datawt/npb.prev.db.gz
+            (
+              cd /tmp/datawt
+              git init -q -b data
+              git add .
+              git -c user.name=npb-bot -c user.email=npb-bot@users.noreply.github.com \
+                commit -q -m "snapshot $(date -u +%FT%TZ) [skip ci]"
+              git push -q --force \
+                "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" data
+            ) && echo "💾 checkpoint $(date -u +%T) ($(du -h /tmp/npb.db.gz | cut -f1))"
+          }
+
+          python -m npb status
+          python -m npb run --loop --telegram &
+          PID=$!
+          start=$(date +%s)
+          end=$(( start + RUN_MINUTES * 60 ))
+          next=$(( start + CHECKPOINT_MINUTES * 60 ))
+          while kill -0 "$PID" 2>/dev/null && [ "$(date +%s)" -lt "$end" ]; do
+            sleep 20
+            if [ "$(date +%s)" -ge "$next" ]; then
+              save || echo "⚠️ checkpoint gagal"
+              next=$(( $(date +%s) + CHECKPOINT_MINUTES * 60 ))
+            fi
+          done
+          ran=$(( $(date +%s) - start ))
+          kill -TERM "$PID" 2>/dev/null || true
+          wait "$PID" 2>/dev/null || true
+          save
+          # Mati cepat = ada yang rusak. Jangan restart terus-terusan; biar job
+          # merah dan kelihatan di tab Actions.
+          if [ "$ran" -lt 1800 ]; then
+            echo "::error::bot berhenti setelah ${ran}s — gak di-restart otomatis"
+            exit 1
+          fi
+
+      - name: Restart diri sendiri
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run bot.yml --ref "${GITHUB_REF_NAME}"

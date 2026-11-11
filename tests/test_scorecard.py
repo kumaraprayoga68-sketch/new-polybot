@@ -49,3 +49,14 @@ def test_paper_and_live_scored_separately(db):
     add_bet(db, 1, 0.5, True, mode="live")
     assert score(db, "copytrade", GateSettings(), "paper").n_total == 0
     assert score(db, "copytrade", GateSettings(), "live").n_total == 1
+
+
+def test_backup_roundtrip(tmp_path):
+    from npb.db import DB
+
+    src = DB(str(tmp_path / "live.db"))
+    add_bet(src, 1, 0.4, True)
+    src.set_meta("promoted:copytrade", "1")
+    src.backup_to(str(tmp_path / "snap" / "copy.db"))
+    copy = DB(str(tmp_path / "snap" / "copy.db"))
+    assert len(copy.groups()) == 1 and copy.promoted("copytrade")

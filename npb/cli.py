@@ -38,9 +38,17 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("kill")
     k.add_argument("reason", nargs="*")
     sub.add_parser("resume")
+    bk = sub.add_parser("backup", help="snapshot database ke file lain (aman saat bot jalan)")
+    bk.add_argument("dest")
     a = p.parse_args(argv)
 
     s = Settings.from_env()
+    if a.cmd == "backup":
+        from .db import DB
+
+        DB(s.db_path).backup_to(a.dest)
+        print(f"💾 {s.db_path} -> {a.dest}")
+        return 0
     bot = _bot(s)
 
     if a.cmd == "run":

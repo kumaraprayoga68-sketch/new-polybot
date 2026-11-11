@@ -119,3 +119,15 @@ def test_live_game_with_past_end_date_still_copied(api, db, settings):
     api.markets["c1"]["end_date_iso"] = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
     api.trades[W] = [trade(tx="tx-stale")]
     assert ct.decisions(log=lambda *_: None) == []
+
+
+def test_pool_setting_change_triggers_new_round(api, db, settings):
+    for i in range(3):
+        api.trades[f"0xw{i}"] = []
+    ct = Copytrade(settings, api, db)
+    ct.refresh_stats(log=lambda *_: None, batch=10)
+    assert not ct.stats_stale()
+    bigger = Copytrade(replace(settings, copytrade=CopytradeSettings(leaderboard_pool=300)), api, db)
+    assert bigger.stats_stale()          # kandidat diperbanyak -> langsung ukur ulang
+    bigger.refresh_stats(log=lambda *_: None, batch=10)
+    assert not bigger.stats_stale()

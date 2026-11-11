@@ -65,8 +65,15 @@ class Copytrade:
         i, n = self.stats_progress()
         if i < n:
             return True          # putaran pengukuran belum kelar
+        if self.db.get_meta("ct:pool_target") != self._pool_target():
+            return True          # setting kandidat berubah -> ukur ulang sekarang
         last = float(self.db.get_meta("ct:stats_at", "0") or 0)
         return time.time() - last > self.cfg.stats_refresh_hours * 3600
+
+    def _pool_target(self) -> str:
+        if self.cfg.manual_wallets:
+            return "manual:" + ",".join(sorted(self.cfg.manual_wallets))
+        return f"leaderboard:{self.cfg.leaderboard_pool}"
 
     def stats_progress(self) -> tuple[int, int]:
         """(sudah diukur, total) untuk putaran pengukuran yang lagi jalan."""
@@ -83,8 +90,10 @@ class Copytrade:
         """
         batch = batch or self.cfg.stats_batch
         i, n = self.stats_progress()
-        if i >= n:
+        target = self._pool_target()
+        if i >= n or self.db.get_meta("ct:pool_target") != target:
             pool = list(self.cfg.manual_wallets) or self.api.leaderboard(self.cfg.leaderboard_pool)
+            self.db.set_meta("ct:pool_target", target)
             self.db.set_meta("ct:pool", json.dumps([w.lower() for w in pool]))
             i, n = 0, len(pool)
             self.db.set_meta("ct:pool_i", "0")

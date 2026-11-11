@@ -40,6 +40,14 @@ jobs:
       RUN_MINUTES: "330"
       CHECKPOINT_MINUTES: "30"
       DASH_MINUTES: "5"
+      # Copytrade: cuma market yang selesai <= 7 hari (hasil cepat ketahuan), dan
+      # kandidat trader lebih banyak + syarat skill sedikit dilonggarin biar sinyal
+      # gak cuma dari segelintir trader NBA. Gerbang live tetap ketat (scorecard).
+      CT_MAX_DAYS_TO_RESOLVE: "7"
+      CT_LEADERBOARD_POOL: "300"
+      CT_MIN_TRADER_T: "1.5"
+      CT_MIN_TRADER_MARKETS: "20"
+      CT_FOLLOW_TOP: "30"
       PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v4

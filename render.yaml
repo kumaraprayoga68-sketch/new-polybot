@@ -1,0 +1,30 @@
+# Render Blueprint — bot jalan 24/7 sebagai Background Worker (paper).
+#
+# Butuh plan berbayar (starter, ~$7/bln) + persistent disk (~$0.25/GB/bln) supaya
+# database SQLite gak hilang tiap deploy/restart. Bisa juga di VPS mana pun:
+#   pip install -e . && python -m npb run --loop --telegram
+services:
+  - type: worker
+    name: new-polybot
+    runtime: python
+    plan: starter
+    branch: main
+    buildCommand: pip install -e .
+    startCommand: python -m npb run --loop --telegram
+    autoDeploy: true
+    disk:
+      name: npb-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NPB_DB_PATH
+        value: /var/data/npb.db
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      # Cloud = paper. Live sengaja gak di-set di sini.
+      - key: NPB_MODE
+        value: paper
+      - key: LIVE_TRADING_ENABLED
+        value: "false"

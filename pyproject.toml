@@ -1,0 +1,27 @@
+[project]
+name = "new-polybot"
+version = "0.1.0"
+description = "Bot Polymarket multi-strategi dengan paper trading realistis dan gerbang statistik sebelum live."
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Cuma dibutuhin buat LIVE trading. Paper trading jalan tanpa ini.
+live = ["py-clob-client>=0.34.6"]
+dev = ["pytest>=8"]
+
+[project.scripts]
+npb = "npb.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["npb*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -38,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
     k = sub.add_parser("kill")
     k.add_argument("reason", nargs="*")
     sub.add_parser("resume")
+    ar = sub.add_parser("archive", help="pindahin bet paper ke arsip (mulai catatan baru)")
+    ar.add_argument("label", help="mis. arsip-v1")
     bk = sub.add_parser("backup", help="snapshot database ke file lain (aman saat bot jalan)")
     bk.add_argument("dest")
     ex = sub.add_parser("export", help="tulis dashboard.json dari database")
@@ -45,12 +47,15 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
 
     s = Settings.from_env()
-    if a.cmd in ("backup", "export"):
-        # Cuma baca DB — jangan bikin Bot (gak perlu API / broker live).
+    if a.cmd in ("backup", "export", "archive"):
+        # Cuma DB — jangan bikin Bot (gak perlu API / broker live).
         from .db import DB
 
         db = DB(s.db_path)
-        if a.cmd == "backup":
+        if a.cmd == "archive":
+            n = db.archive(a.label)
+            print(f"🗄️  {n} order paper dipindah ke '{a.label}'. Scorecard paper mulai dari nol.")
+        elif a.cmd == "backup":
             db.backup_to(a.dest)
             print(f"💾 {s.db_path} -> {a.dest}")
         else:

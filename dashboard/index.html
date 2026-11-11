@@ -137,6 +137,7 @@
 
   <h2 id="gatesH" hidden>Gerbang live</h2>
   <div class="gates" id="gates"></div>
+  <div class="why" id="arch"></div>
 
   <div id="calib"></div>
 
@@ -507,6 +508,9 @@ function drawDaily(card, curve) {
 
 function renderGates() {
   $("gatesH").hidden = false;
+  $("arch").innerHTML = (D.archives || []).map(a =>
+    `🗄️ <b>${esc(a.label)}</b> (logika lama, gak dihitung di atas): ${a.bets} bet · ${a.settled} settle · PnL
+     <b class="${cls(a.pnl)}">${usd(a.pnl, true)}</b>`).join("<br>");
   const g = D.gate;
   $("gates").innerHTML = ["copytrade", "arbitrage"].map(name => {
     const p = D.scores.find(s => s.strategy === name && s.mode === "paper");

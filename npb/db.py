@@ -302,6 +302,31 @@ class DB:
             p.append(mode)
         return self.query(sql + " GROUP BY o.group_id HAVING " + having, tuple(p) + params)
 
+    def archive(self, label: str, mode: str = "paper") -> int:
+        """Pindahin semua order `mode` ke label arsip (mis. 'arsip-v1').
+
+        Buat mulai catatan baru setelah logika strategi berubah — hasil versi
+        lama gak boleh dicampur ke scorecard versi baru. Gak ada yang dihapus:
+        balikin dengan `UPDATE orders SET mode='paper' WHERE mode='<label>'`."""
+        if not label.startswith("arsip-"):
+            raise ValueError("label arsip harus diawali 'arsip-'")
+        cur = self.execute("UPDATE orders SET mode=? WHERE mode=?", (label, mode))
+        self.set_meta(f"mtm:{mode}", None)
+        self.log("warn", "archive", f"{cur.rowcount} order {mode} dipindah ke {label}")
+        return cur.rowcount
+
+    def archives(self) -> list[dict]:
+        """Ringkasan tiap label arsip."""
+        rows = self.query("SELECT DISTINCT mode FROM orders WHERE mode LIKE 'arsip-%'")
+        out = []
+        for r in rows:
+            pnls = self.settled_group_pnls(r["mode"])
+            n = self.query("SELECT COUNT(DISTINCT group_id) AS n FROM orders WHERE mode=? "
+                           "AND status='filled'", (r["mode"],))[0]["n"]
+            out.append({"label": r["mode"], "bets": n, "settled": len(pnls),
+                        "pnl": sum(p for _, p in pnls)})
+        return out
+
     def open_tokens(self, condition_id: str, mode: str | None = None) -> set[str]:
         """Token yang lagi kita pegang (belum settle) di satu market."""
         sql = ("SELECT DISTINCT token_id FROM orders o WHERE status='filled' AND condition_id=? "

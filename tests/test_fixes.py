@@ -251,3 +251,23 @@ def test_executor_blocks_opposite_side(db, settings):
     order(db, "c1", "no", 4.0)
     res = Executor(settings, db).submit(Decision("copytrade", [_leg(token="yes", cid="c1")]))
     assert res.status == "blocked" and "sisi lawan" in res.reason
+
+
+# ── arsip ────────────────────────────────────────────────────────────────────
+def test_archive_resets_paper_but_keeps_data(db, settings):
+    from npb import export
+
+    order(db, "a", "ta", 5.0)
+    order(db, "b", "tb", 5.0)
+    db.set_resolution("a", {"ta": 0.0})                  # rugi $5
+    db.set_meta("mtm:paper", json.dumps({"ts": time.time(), "unrealized": -3}))
+    with pytest.raises(ValueError):
+        db.archive("v1")
+    assert db.archive("arsip-v1") == 2
+    assert db.groups(mode="paper") == [] and db.open_exposure(14, mode="paper") == 0
+    assert db.realized_pnl_since(0, mode="paper") == 0
+    assert db.archives() == [{"label": "arsip-v1", "bets": 2, "settled": 1, "pnl": -5.0}]
+    d = export.build(db, settings)
+    assert d["bets"] == [] and d["summary"]["bets"] == 0 and d["archives"][0]["pnl"] == -5.0
+    res = Executor(settings, db).submit(Decision("copytrade", [_leg(cid="new")]))
+    assert res.status == "filled"                       # rem rugi & mtm ikut reset

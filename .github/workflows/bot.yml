@@ -13,7 +13,12 @@ name: bot 24/7 (paper)
 # Secrets (Settings -> Secrets and variables -> Actions), opsional:
 #   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      archive_label:
+        description: "Opsional: pindahin semua bet paper ke arsip ini dulu (mis. arsip-v1), scorecard mulai dari nol"
+        required: false
+        default: ""
   schedule:
     # Jaring pengaman kalau self-dispatch gagal. Gak bunuh run yang lagi jalan
     # (cancel-in-progress: false) — cuma antre di belakangnya.
@@ -85,6 +90,12 @@ jobs:
             echo "::error::gagal cek branch data (exit $rc) — stop biar data lama gak ketimpa"
             exit 1
           fi
+
+      - name: Arsipkan bet paper lama (kalau diminta)
+        if: ${{ inputs.archive_label != '' }}
+        env:
+          LABEL: ${{ inputs.archive_label }}
+        run: python -m npb archive "$LABEL"
 
       - name: Jalankan bot + publish berkala
         env:

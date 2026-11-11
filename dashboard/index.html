@@ -127,14 +127,19 @@ function ago(ts) {
 }
 
 function renderTop() {
-  const age = D.last_cycle ? Date.now() / 1000 - D.last_cycle : Infinity;
+  // last_cycle 0 = siklus pertama belum kelar (run pertama ngukur 100 trader dulu).
+  // Patokannya umur data: kalau data masih baru, bot-nya hidup.
+  const first = !D.last_cycle;
+  const age = Date.now() / 1000 - (first ? D.generated_at : D.last_cycle);
   $("dot").style.background = age < 600 ? "var(--green)" : age < 3600 ? "var(--amber)" : "var(--red)";
   $("dot").style.boxShadow = age < 600 ? "0 0 10px var(--green)" : "none";
-  $("sub").textContent = `siklus terakhir ${ago(D.last_cycle)} · data ${ago(D.generated_at)}`;
+  $("sub").textContent = first
+    ? `siklus pertama sedang jalan · data ${ago(D.generated_at)}`
+    : `siklus terakhir ${ago(D.last_cycle)} · data ${ago(D.generated_at)}`;
 
   const b = [];
   if (D.killed) b.push(`<div class="banner red">⛔ KILL SWITCH aktif: ${esc(D.killed)} — order baru berhenti</div>`);
-  if (age >= 3600) b.push(`<div class="banner amber">⚠️ Bot gak jalan ${ago(D.last_cycle)}. Cek tab Actions di GitHub.</div>`);
+  if (age >= 3600) b.push(`<div class="banner amber">⚠️ Bot gak update ${ago(Date.now() / 1000 - age)}. Cek tab Actions di GitHub.</div>`);
   if (D.live_requested) b.push(`<div class="banner amber">🔴 Mode LIVE diminta — cuma strategi yang di-promote yang pakai duit beneran</div>`);
   $("banners").innerHTML = b.join("");
 

@@ -62,9 +62,15 @@ jobs:
             echo "Branch data belum ada — mulai DB baru."
           elif [ "$rc" = 0 ]; then
             git fetch --depth 1 origin data
-            git show FETCH_HEAD:npb.db.gz > /tmp/prev.db.gz
-            gunzip -c /tmp/prev.db.gz > data/npb.db
-            echo "DB dipulihkan: $(du -h data/npb.db | cut -f1)"
+            # Branch bisa ada tanpa DB: run sebelumnya mati sebelum checkpoint
+            # pertama (cuma sempat publish dashboard.json).
+            if git cat-file -e FETCH_HEAD:npb.db.gz 2>/dev/null; then
+              git show FETCH_HEAD:npb.db.gz > /tmp/prev.db.gz
+              gunzip -c /tmp/prev.db.gz > data/npb.db
+              echo "DB dipulihkan: $(du -h data/npb.db | cut -f1)"
+            else
+              echo "Branch data belum punya npb.db.gz — mulai DB baru."
+            fi
           else
             echo "::error::gagal cek branch data (exit $rc) — stop biar data lama gak ketimpa"
             exit 1
@@ -105,8 +111,8 @@ jobs:
           PID=$!
           start=$(date +%s)
           end=$(( start + RUN_MINUTES * 60 ))
-          next_dash=$(( start + 120 ))            # dashboard pertama setelah ~1 siklus
-          next_db=$(( start + CHECKPOINT_MINUTES * 60 ))
+          next_dash=$(( start + CHECKPOINT_MINUTES * 60 ))
+          next_db=$(( start + 120 ))              # publish pertama (DB + dashboard) ~2 menit
           while kill -0 "$PID" 2>/dev/null && [ "$(date +%s)" -lt "$end" ]; do
             sleep 20
             now=$(date +%s)

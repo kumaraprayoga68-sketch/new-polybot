@@ -154,8 +154,25 @@
 
 <script>
 // ?src=... buat nguji pakai file lain (mis. hasil `npb export` lokal).
-const DATA_URL = new URLSearchParams(location.search).get("src")
-  || "https://raw.githubusercontent.com/kumaraprayoga68-sketch/new-polybot/refs/heads/data/dashboard.json";
+const REPO = "kumaraprayoga68-sketch/new-polybot";
+const SRC = new URLSearchParams(location.search).get("src");
+const BRANCH_URL = `https://raw.githubusercontent.com/${REPO}/refs/heads/data/dashboard.json`;
+// raw.githubusercontent nge-cache URL per nama branch lebih lama dari max-age-nya
+// (kelihatan: branch udah ada data baru, dashboard masih nampilin yang lama).
+// Jadi: tanya SHA terbaru branch `data` ke API (respons 304 gak makan kuota
+// 60/jam), lalu baca file dari SHA itu — URL per commit gak pernah basi.
+async function dataUrl() {
+  if (SRC) return SRC + "?t=" + Date.now();
+  try {
+    const r = await fetch(`https://api.github.com/repos/${REPO}/git/ref/heads/data`, { cache: "no-cache" });
+    if (r.status === 404) return null;
+    if (r.ok) {
+      const sha = (await r.json()).object?.sha;
+      if (sha) return `https://raw.githubusercontent.com/${REPO}/${sha}/dashboard.json`;
+    }
+  } catch (e) { /* kena limit / offline: pakai URL branch */ }
+  return BRANCH_URL + "?t=" + Date.now();
+}
 let D = null, TAB = "bets";
 
 const $ = id => document.getElementById(id);
@@ -651,7 +668,8 @@ function renderPanel() {
 async function load() {
   $("dot").style.background = "var(--amber)";
   try {
-    const r = await fetch(DATA_URL + "?t=" + Date.now(), { cache: "no-store" });
+    const url = await dataUrl();
+    const r = url ? await fetch(url, { cache: "no-store" }) : { status: 404 };
     if (r.status === 404) {
       $("dot").style.background = "var(--mut)";
       $("sub").textContent = "belum ada data";

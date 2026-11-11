@@ -78,6 +78,13 @@ class Executor:
         for cid, t in per_market.items():
             if self.db.market_exposure(cid, mode=mode) + t > r.max_market_usd + 1e-9:
                 return f"market {cid[:10]}… lewat plafon per market ${r.max_market_usd:.2f}"
+        # Beli sisi lawan dari posisi sendiri = taruhan saling batal, yang pasti
+        # hilang cuma fee + spread. Kejadian di paper: dua trader yang diikuti
+        # pasang di sisi berlawanan (MOUZ vs G2), bot ngikutin dua-duanya.
+        for leg in d.legs:
+            held = self.db.open_tokens(leg.condition_id, mode=mode) - {leg.token_id}
+            if held:
+                return f"udah pegang sisi lawan di market {leg.condition_id[:10]}…"
         realized = self.db.realized_pnl_since(time.time() - 86400, mode=mode)
         unrealized = min(0.0, self.unrealized(mode))
         if realized + unrealized < -r.daily_loss_limit_usd:

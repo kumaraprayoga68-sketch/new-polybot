@@ -302,6 +302,16 @@ class DB:
             p.append(mode)
         return self.query(sql + " GROUP BY o.group_id HAVING " + having, tuple(p) + params)
 
+    def open_tokens(self, condition_id: str, mode: str | None = None) -> set[str]:
+        """Token yang lagi kita pegang (belum settle) di satu market."""
+        sql = ("SELECT DISTINCT token_id FROM orders o WHERE status='filled' AND condition_id=? "
+               "AND NOT EXISTS (SELECT 1 FROM resolutions r WHERE r.condition_id=o.condition_id)")
+        params: tuple = (condition_id,)
+        if mode:
+            sql += " AND mode=?"
+            params += (mode,)
+        return {r["token_id"] for r in self.query(sql, params)}
+
     def market_exposure(self, condition_id: str, mode: str | None = None) -> float:
         sql = ("SELECT COALESCE(SUM(cost + fee), 0) AS t FROM orders o WHERE status='filled' "
                "AND condition_id=? AND NOT EXISTS "

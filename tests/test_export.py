@@ -48,3 +48,25 @@ def test_chart_data(db, settings):
     assert _skip_reason_key("resolve 3.2 hari lagi (> 7)") == "resolve"
     assert _skip_reason_key("resolve -0.3 hari lagi (di luar 0..30)") == "resolve"
     assert _skip_reason_key("market tutup / gak terima order") == "market tutup / gak terima order"
+
+
+def test_detail_sections_and_no_secrets(db, settings):
+    from dataclasses import replace
+
+    s = replace(settings, private_key="SECRET-KEY", telegram_token="SECRET-TG", funder_address="0xF")
+    sid = db.add_signal("copytrade", "k", token_id="y", decision="take", edge_est=0.05,
+                        extra={"wallet": "0xw"})
+    for tok, won in (("y", True), ("n", False)):          # dua sisi di market yang sama
+        db.add_order(strategy="copytrade", mode="paper", group_id=new_group_id(), signal_id=sid,
+                     condition_id="c", token_id=tok, outcome=tok, market="Dota 2: A vs B",
+                     end_date="2099-01-01", shares_req=10, limit_price=0.5, status="filled",
+                     shares=10, cost=5.0)
+    db.set_resolution("c", {"y": 1.0, "n": 0.0})
+    d = export.build(db, s)
+    raw = json.dumps(d)
+    assert "SECRET" not in raw and "0xF" not in raw
+    assert d["summary"]["settled"] == 2 and d["summary"]["two_sided_markets"] == 1
+    assert d["by_category"][0]["key"] == "esports"
+    assert d["by_wallet"][0]["key"] == "0xw" and d["by_wallet"][0]["n"] == 2
+    assert all(b["two_sided"] for b in d["bets"])
+    assert d["risk_state"]["paper"]["realized_24h"] == 0.0

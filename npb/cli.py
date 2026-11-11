@@ -57,7 +57,8 @@ def main(argv: list[str] | None = None) -> int:
             from . import export
             from .strategies.copytrade import Copytrade
 
-            export.write(a.dest, db, s, Copytrade(s, None, db).followed())
+            ct = Copytrade(s, None, db)
+            export.write(a.dest, db, s, ct.followed(), ct)
         return 0
     bot = _bot(s)
 

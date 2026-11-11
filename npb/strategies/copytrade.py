@@ -67,6 +67,7 @@ class Copytrade:
         # pelapor error (log + Telegram). Default aman buat tes / CLI.
         self.mode_for = lambda name: "paper"
         self.on_error = lambda source, e: self.db.log("error", source, str(e))
+        self._pending: dict[str, str] = {}     # cid -> token yang udah diputusin siklus ini
 
     # ── pemilihan trader ────────────────────────────────────────────────────
     def stats_stale(self) -> bool:
@@ -140,20 +141,35 @@ class Copytrade:
         z = NormalDist().inv_cdf(1 - min(0.5, cfg.family_alpha / n))
         return max(cfg.min_trader_t, z)
 
+    def follow_reasons(self, r, need_t: float | None = None) -> list[str]:
+        """Kenapa trader ini GAK diikuti (kosong = lulus semua syarat)."""
+        cfg = self.cfg
+        need_t = self.required_t() if need_t is None else need_t
+        out = []
+        if r["markets"] < cfg.min_trader_markets:
+            out.append(f"market {r['markets']} < {cfg.min_trader_markets}")
+        if r["t_stat"] < need_t:
+            out.append(f"t {r['t_stat']:.2f} < {need_t:.2f}")
+        if r["norm_edge"] is None:
+            out.append("belum diukur ulang (v2)")
+        elif r["shrunk_edge"] <= 0 or r["norm_edge"] <= 0:
+            out.append("edge <= 0")
+        if r["norm_edge"] is not None:
+            if (r["holdout_n"] or 0) < cfg.min_holdout_markets:
+                out.append(f"holdout {r['holdout_n'] or 0} < {cfg.min_holdout_markets} market")
+            elif (r["holdout_edge"] or 0) <= 0:
+                out.append(f"holdout edge {r['holdout_edge'] or 0:+.3f} <= 0")
+        return out
+
     def followed(self) -> dict[str, float]:
         """wallet -> edge ternormalisasi (shrunk), cuma yang lulus semua syarat:
         cukup market, t lolos koreksi multiple testing, dan edge di holdout positif."""
-        cfg = self.cfg
         need_t = self.required_t()
         out = {}
         for r in self.db.trader_stats():
-            norm = r["norm_edge"]
-            if (r["markets"] >= cfg.min_trader_markets and r["t_stat"] >= need_t
-                    and r["shrunk_edge"] > 0 and norm is not None and norm > 0
-                    and (r["holdout_n"] or 0) >= cfg.min_holdout_markets
-                    and (r["holdout_edge"] or 0) > 0):
-                out[r["wallet"]] = norm
-            if len(out) >= cfg.follow_top:
+            if not self.follow_reasons(r, need_t):
+                out[r["wallet"]] = r["norm_edge"]
+            if len(out) >= self.cfg.follow_top:
                 break
         return out
 
@@ -221,6 +237,18 @@ class Copytrade:
             self.db.add_signal(NAME, key, decision="skip", reason=reason, **base, **kw)
             return None
 
+        # Satu posisi per market. Dua alasan: (1) dua trader di sisi berlawanan =
+        # kita taruhan lawan diri sendiri, yang pasti hilang cuma fee+spread;
+        # (2) bet berulang di market yang sama itu satu kejadian yang sama, jadi
+        # bikin t-stat scorecard kelihatan lebih yakin dari yang sebenernya.
+        held = self.db.open_tokens(cid, mode=self.mode_for(NAME))
+        if cid in self._pending:
+            held.add(self._pending[cid])
+        if held - {tok}:
+            return skip("udah pegang sisi lawan di market ini")
+        if held and cfg.one_position_per_market:
+            return skip("udah pegang posisi di market ini")
+
         m = self.api.market(cid)
         if not m or m.get("closed") or not m.get("accepting_orders", True):
             return skip("market tutup / gak terima order")
@@ -283,6 +311,7 @@ class Copytrade:
             log("[copytrade] belum ada trader yang lulus syarat skill — gak ada sinyal.")
             return []
         out, tokens = [], set()
+        self._pending = {}
         bankroll = self.free_bankroll()
         for wallet, edge in follow.items():
             try:
@@ -291,6 +320,7 @@ class Copytrade:
                     d = self.evaluate(wallet, edge, t, bankroll)
                     if d and d.legs[0].token_id not in tokens:
                         tokens.add(d.legs[0].token_id)
+                        self._pending[d.legs[0].condition_id] = d.legs[0].token_id
                         out.append(d)
                         lg = d.legs[0]
                         fill = lg.book.buy(lg.shares, lg.fee_rate)

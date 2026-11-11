@@ -109,6 +109,8 @@ class CopytradeSettings:
     # Sinyal: cuma trade BARU, gak lebih tua dari ini.
     max_signal_age_sec: int = 600
     max_trade_pages: int = 5         # halaman /trades (100 baris) per trader per siklus
+    # Satu posisi per market (sisi lawan SELALU diblok, ini soal nambah di sisi sama).
+    one_position_per_market: bool = True
     min_trader_usdc: float = 50.0
     # Tolak kalau harga rata-rata kita lebih mahal dari harga trader + ini.
     max_slippage: float = 0.02
@@ -200,6 +202,7 @@ class Settings:
                 max_resolution_lookups=_i("CT_MAX_RESOLUTION_LOOKUPS", 150),
                 max_signal_age_sec=_i("CT_MAX_SIGNAL_AGE_SEC", 600),
                 max_trade_pages=_i("CT_MAX_TRADE_PAGES", 5),
+                one_position_per_market=_b("CT_ONE_POSITION_PER_MARKET", True),
                 min_trader_usdc=_f("CT_MIN_TRADER_USDC", 50.0),
                 max_slippage=_f("CT_MAX_SLIPPAGE", 0.02),
                 min_price=_f("CT_MIN_PRICE", 0.05),

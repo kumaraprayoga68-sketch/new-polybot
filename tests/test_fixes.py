@@ -222,3 +222,32 @@ def test_paper_partial_does_not_kill(api, db, settings):
     ex = Executor(settings, db, api=api)
     res = ex.submit(Decision("arbitrage", [_leg(token="x", cid="a"), _leg(token="y", cid="b")]))
     assert res.status == "partial" and not db.killed()
+
+
+# ── bet dua sisi ─────────────────────────────────────────────────────────────
+def test_copytrade_skips_opposite_side_and_stacking(api, db, settings):
+    ct = _ct(api, db, settings, norm=0.3)
+    api.book_map["n1"] = make_book([(0.41, 1000)], bids=[(0.39, 1000)], token="n1")
+    order(db, "c1", "n1", 4.0)                      # udah pegang sisi NO
+    db.set_trader_last_ts(W, 0)
+    api.trades[W] = [_trade()]                      # trader beli YES
+    assert ct.decisions(log=lambda *_: None) == []
+    assert "sisi lawan" in db.query("SELECT reason FROM signals")[0]["reason"]
+
+
+def test_two_traders_opposite_sides_same_cycle(api, db, settings):
+    ct = _ct(api, db, settings, norm=0.3)
+    db.upsert_trader_stats("0xb", 100, 0.05, 4.0, 0.05, norm_edge=0.3, holdout_n=30, holdout_edge=0.05)
+    api.book_map["n1"] = make_book([(0.41, 1000)], bids=[(0.39, 1000)], token="n1")
+    db.set_trader_last_ts(W, 0)
+    db.set_trader_last_ts("0xb", 0)
+    api.trades[W] = [_trade()]
+    api.trades["0xb"] = [_trade(tx="b1", token_id="n1", outcome="No")]
+    ds = ct.decisions(log=lambda *_: None)
+    assert len(ds) == 1
+
+
+def test_executor_blocks_opposite_side(db, settings):
+    order(db, "c1", "no", 4.0)
+    res = Executor(settings, db).submit(Decision("copytrade", [_leg(token="yes", cid="c1")]))
+    assert res.status == "blocked" and "sisi lawan" in res.reason

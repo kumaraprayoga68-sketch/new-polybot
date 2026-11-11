@@ -162,8 +162,14 @@ class Copytrade:
         if not m or m.get("closed") or not m.get("accepting_orders", True):
             return skip("market tutup / gak terima order")
         days = days_until(m.get("end_date_iso"))
-        if days is not None and (days < 0 or days > cfg.max_days_to_resolve):
-            return skip(f"resolve {days:.1f} hari lagi (di luar 0..{cfg.max_days_to_resolve})")
+        # end_date market olahraga = tanggal pertandingan jam 00:00, jadi pertandingan
+        # yang lagi jalan hari ini kelihatan "lewat" beberapa jam. Market yang beneran
+        # tutup udah kebuang di cek accepting_orders di atas; di sini cuma buang yang
+        # lewat jauh (limbo, nunggu sengketa).
+        if days is not None and days < -2:
+            return skip(f"end date lewat {-days:.1f} hari, belum settle")
+        if days is not None and days > cfg.max_days_to_resolve:
+            return skip(f"resolve {days:.1f} hari lagi (> {cfg.max_days_to_resolve})")
         book = self.api.book(tok)
         if book is None or book.best_ask is None:
             return skip("order book kosong")

@@ -104,3 +104,18 @@ def test_stats_measured_in_batches(api, db, settings):
     ct.refresh_stats(log=lambda *_: None, batch=2)
     assert ct.stats_progress() == (5, 5)
     assert not ct.stats_stale()          # putaran kelar, belum lewat refresh_hours
+
+
+def test_live_game_with_past_end_date_still_copied(api, db, settings):
+    from datetime import datetime, timedelta, timezone
+
+    ct = setup(api, db, settings)
+    # Kasus nyata NBA: end_date = tanggal pertandingan 00:00, sekarang udah lewat ~7 jam.
+    api.markets["c1"]["end_date_iso"] = (datetime.now(timezone.utc) - timedelta(hours=7)).isoformat()
+    db.set_trader_last_ts(W, 0)
+    api.trades[W] = [trade()]
+    assert len(ct.decisions(log=lambda *_: None)) == 1
+
+    api.markets["c1"]["end_date_iso"] = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+    api.trades[W] = [trade(tx="tx-stale")]
+    assert ct.decisions(log=lambda *_: None) == []

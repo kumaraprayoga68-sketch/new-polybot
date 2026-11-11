@@ -109,12 +109,22 @@ jobs:
           python -m npb status
           python -m npb run --loop --telegram &
           PID=$!
+          # Run dibatalin (Cancel / run baru) -> simpen DB dulu sebelum mati,
+          # biar hasil sejak checkpoint terakhir gak ilang.
+          on_cancel() {
+            echo "⏹️  dibatalkan — simpan DB dulu"
+            kill -TERM "$PID" 2>/dev/null || true
+            wait "$PID" 2>/dev/null || true
+            publish db || true
+            exit 130
+          }
+          trap on_cancel INT TERM
           start=$(date +%s)
           end=$(( start + RUN_MINUTES * 60 ))
           next_dash=$(( start + CHECKPOINT_MINUTES * 60 ))
           next_db=$(( start + 120 ))              # publish pertama (DB + dashboard) ~2 menit
           while kill -0 "$PID" 2>/dev/null && [ "$(date +%s)" -lt "$end" ]; do
-            sleep 20
+            sleep 20 & wait $!      # `wait` biar trap langsung jalan pas dibatalin
             now=$(date +%s)
             if [ "$now" -ge "$next_db" ]; then
               publish db || echo "⚠️ checkpoint DB gagal"
@@ -125,6 +135,7 @@ jobs:
               next_dash=$(( now + DASH_MINUTES * 60 ))
             fi
           done
+          trap - INT TERM
           ran=$(( $(date +%s) - start ))
           kill -TERM "$PID" 2>/dev/null || true
           wait "$PID" 2>/dev/null || true

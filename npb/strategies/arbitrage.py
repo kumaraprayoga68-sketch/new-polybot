@@ -219,11 +219,15 @@ class Arbitrage:
                              self.s.risk.max_order_usd, cfg.min_edge_per_set)
             if sz is not None:
                 out.append((bk, sz, ordered, rates))
+        self._last_scan = {"ts": time.time(), "prefilter": len(baskets), "profitable": len(out)}
         return out
 
     def decisions(self, log=print) -> list[Decision]:
         out = []
-        for bk, sz, books, rates in self.opportunities(log):
+        opps = self.opportunities(log)
+        # Buat dashboard: biar kelihatan scan-nya jalan walau hasilnya 0.
+        self.db.set_meta("arb:last_scan_result", json.dumps(self._last_scan))
+        for bk, sz, books, rates in opps:
             # Satu basket per event per 10 menit, biar gak nembak berulang di book yang sama.
             key = (f"arb:{bk.side}:{bk.markets[0].condition_id}:{len(bk.markets)}:"
                    f"{int(time.time() // 600)}")

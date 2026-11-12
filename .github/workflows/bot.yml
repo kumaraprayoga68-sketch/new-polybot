@@ -20,9 +20,11 @@ on:
         required: false
         default: ""
   schedule:
-    # Jaring pengaman kalau self-dispatch gagal. Gak bunuh run yang lagi jalan
-    # (cancel-in-progress: false) — cuma antre di belakangnya.
-    - cron: "23 */6 * * *"
+    # Jaring pengaman kalau self-dispatch gagal (kejadian 11 Nov: GitHub error
+    # waktu start, bot mati ~4 jam nunggu cron 6-jaman). Tiap jam: kalau bot
+    # lagi jalan, run ini cuma antre lalu digantiin run restart berikutnya
+    # (kelihatan "cancelled" di tab Actions — normal, bukan error).
+    - cron: "23 * * * *"
 
 permissions:
   contents: write   # push snapshot DB ke branch data

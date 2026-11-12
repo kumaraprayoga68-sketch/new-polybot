@@ -44,3 +44,14 @@ def test_kill_switch_stops_trading_but_keeps_settling(api, db, settings):
     bot.cycle()
     assert db.groups() == []
     assert "kill switch: test" in bot.status()
+
+
+def test_arbitrage_scan_result_recorded_even_when_empty(api, db, settings):
+    from npb import export
+
+    bot = Bot(replace(settings, copytrade=CopytradeSettings(enabled=False)), api=api, db=db,
+              telegram=Telegram("", ""), log=lambda *_: None)
+    bot.cycle()
+    d = export.build(db, settings)
+    assert d["arb_last_scan"]["prefilter"] == 0 and d["arb_last_scan"]["profitable"] == 0
+    assert d["followed_count"] == 0 and d["last_take_ts"] is None

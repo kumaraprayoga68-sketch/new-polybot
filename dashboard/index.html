@@ -28,6 +28,8 @@
   .banner{border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:13px;font-weight:600}
   .banner.red{background:rgba(255,92,108,.12);border:1px solid var(--red);color:var(--red)}
   .banner.amber{background:rgba(255,176,32,.1);border:1px solid var(--amber);color:var(--amber)}
+  .banner.blue{background:rgba(74,168,255,.08);border:1px solid var(--blue);color:var(--blue);font-weight:500;line-height:1.5}
+  .banner.blue b{font-weight:700}
   .tiles{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-bottom:14px}
   @media(min-width:600px){.tiles{grid-template-columns:repeat(3,1fr)}}
   @media(min-width:940px){.tiles{grid-template-columns:repeat(5,1fr)}}
@@ -207,6 +209,19 @@ function renderTop() {
   if (D.live_requested) b.push(`<div class="banner amber">🔴 Mode LIVE diminta — cuma strategi yang di-promote yang pakai duit beneran</div>`);
   const rp = D.risk_state && D.risk_state.paper;
   if (rp && rp.brake) b.push(`<div class="banner amber">🧯 Rem rugi 24 jam aktif: rugi ${usd(-rp.loss_24h)} > batas ${usd(rp.loss_limit)} — bet paper baru berhenti sampai rugi lama lewat 24 jam</div>`);
+  // Bot hidup tapi gak ada kerjaan: bilang terus terang, biar dashboard kosong
+  // gak disangka rusak.
+  const followedN = D.followed_count ?? (D.traders || []).filter(t => t.followed).length;
+  if (followedN === 0 && !D.killed && age < 3600) {
+    const [pi, pn] = D.traders_progress || [0, 0];
+    const ct = pn && pi < pn
+      ? `copytrade lagi ngukur trader (${pi}/${pn}), belum ada yang diikuti`
+      : `copytrade: <b>0 dari ${pn} trader</b> lolos syarat (t ≥ ${D.traders_required_t != null ? D.traders_required_t.toFixed(2) : "?"} + holdout positif), jadi gak ada sinyal`;
+    const a = D.arb_last_scan;
+    const arb = a ? `arbitrage: ${a.prefilter} basket dicek ${ago(a.ts)}, <b>${a.profitable}</b> yang untung setelah fee` : "";
+    const last = D.last_take_ts ? `bet terakhir diikuti ${ago(D.last_take_ts)}` : "belum pernah ada bet diikuti";
+    b.push(`<div class="banner blue">💤 <b>Bot hidup tapi nganggur.</b><br>${ct}.<br>${arb ? arb + ".<br>" : ""}${last}.</div>`);
+  }
   if (D.summary && D.summary.two_sided_markets) b.push(`<div class="banner amber">↔️ ${D.summary.two_sided_markets} market kepegang DUA sisi (bet lama sebelum perbaikan) — lihat filter "dua sisi" di tab Bet</div>`);
   $("banners").innerHTML = b.join("");
 

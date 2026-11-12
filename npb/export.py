@@ -41,6 +41,13 @@ def category(title: str) -> str:
     return "lainnya"
 
 
+def _json_meta(db: DB, key: str):
+    try:
+        return json.loads(db.get_meta(key, "") or "null")
+    except ValueError:
+        return None
+
+
 def _drift(db: DB) -> list[dict]:
     """Rata-rata perubahan mid setelah sinyal, dipisah take vs skip."""
     rows = db.query(
@@ -308,6 +315,10 @@ def build(db: DB, settings: Settings, followed: dict[str, float] | None = None, 
         "traders": traders,
         "traders_required_t": need_t,
         "traders_measured_at": float(db.get_meta("ct:stats_at", "0") or 0),
+        "last_signal_ts": (db.query("SELECT MAX(ts) AS t FROM signals")[0]["t"]),
+        "last_take_ts": (db.query("SELECT MAX(ts) AS t FROM signals WHERE decision='take'")[0]["t"]),
+        "followed_count": len(followed),
+        "arb_last_scan": _json_meta(db, "arb:last_scan_result"),
         "traders_progress": [int(db.get_meta("ct:pool_i", "0") or 0),
                              len(json.loads(db.get_meta("ct:pool", "[]") or "[]"))],
         "errors": errors,

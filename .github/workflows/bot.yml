@@ -48,14 +48,18 @@ jobs:
       CHECKPOINT_MINUTES: "30"
       DASH_MINUTES: "5"
       # Copytrade: cuma market yang selesai <= 7 hari (hasil cepat ketahuan), dan
-      # kandidat trader lebih banyak. CT_MIN_TRADER_T cuma batas bawah: dengan 300
-      # kandidat, koreksi multiple testing Benjamini-Hochberg (CT_FDR_Q=0.10) naikin syaratnya ke
-      # t ~3.6, plus edge di holdout (market terbaru) harus positif. Kalau hasilnya
-      # 0 trader diikuti, itu jawaban jujur — bukan bug.
+      # kandidat trader lebih banyak. CT_MIN_TRADER_T cuma batas bawah; koreksi
+      # multiple testing Benjamini-Hochberg (CT_FDR_Q) nentuin t yang beneran dipakai,
+      # plus edge di holdout (market terbaru) harus positif.
+      # Dikendorin 12 Nov (q 0.10 -> 0.25, holdout 10 -> 6). Simulasi di 149 trader
+      # terukur: q=0.10 -> t>=3.81, 2 trader; q=0.25 -> t>=2.33, 8 trader dengan
+      # perkiraan ~1.6 yang cuma hoki. Gerbang live gak berubah.
       CT_MAX_DAYS_TO_RESOLVE: "7"
       CT_LEADERBOARD_POOL: "300"
       CT_MIN_TRADER_T: "1.5"
       CT_MIN_TRADER_MARKETS: "20"
+      CT_FDR_Q: "0.25"
+      CT_MIN_HOLDOUT_MARKETS: "6"
       CT_FOLLOW_TOP: "30"
       PYTHONUNBUFFERED: "1"
     steps:

@@ -49,15 +49,41 @@ def test_normalized_edge():
     assert r.norm_edge == pytest.approx(0.1 / math.sqrt(0.09))
 
 
-def test_multiple_testing_raises_required_t(api, db, settings):
+def _stat(db, w, t, hold=0.05):
+    db.upsert_trader_stats(w, 100, 0.05, t, 0.04, norm_edge=0.1, holdout_n=30, holdout_edge=hold)
+
+
+def test_benjamini_hochberg_threshold(api, db, settings):
     ct = Copytrade(settings, api, db)
-    db.set_meta("ct:pool", json.dumps([f"0x{i}" for i in range(300)]))
-    assert ct.required_t() == pytest.approx(3.59, abs=0.01)
-    # t=3 dulu lolos (min 2.0), sekarang nggak dengan 300 kandidat
-    db.upsert_trader_stats(W, 100, 0.05, 3.0, 0.04, norm_edge=0.1, holdout_n=30, holdout_edge=0.05)
-    assert ct.followed() == {}
-    off = Copytrade(replace(settings, copytrade=CopytradeSettings(family_alpha=0)), api, db)
-    assert W in off.followed()
+    # 100 trader noise (t~0) + 3 jago: BH q=0.1 -> yang jago lolos, noise nggak
+    for i in range(100):
+        _stat(db, f"0xn{i}", 0.5 - i / 100)
+    for i, t in enumerate((4.0, 3.5, 3.2)):
+        _stat(db, f"0xg{i}", t)
+    need = ct.required_t()
+    assert 3.0 < need <= 3.2
+    assert set(ct.followed()) == {"0xg0", "0xg1", "0xg2"}
+
+
+def test_benjamini_hochberg_none_pass_when_all_noise(api, db, settings):
+    ct = Copytrade(settings, api, db)
+    for i in range(300):
+        _stat(db, f"0xn{i}", 2.0 if i < 5 else 0.0)      # 5 di t=2: wajar karena hoki
+    assert ct.required_t() == float("inf") and ct.followed() == {}
+    from npb import export
+    d = export.build(db, settings, ct.followed(), ct)
+    json.loads(json.dumps(d, allow_nan=False))         # gak ada Infinity di JSON
+    assert d["traders_required_t"] is None
+    off = Copytrade(replace(settings, copytrade=CopytradeSettings(fdr_q=0)), api, db)
+    assert len(off.followed()) == 5
+
+
+def test_stale_pool_rows_ignored(api, db, settings):
+    ct = Copytrade(settings, api, db)
+    _stat(db, "0xold", 9.0)
+    _stat(db, "0xnew", 9.0)
+    db.set_meta("ct:pool", json.dumps(["0xnew"]))
+    assert set(ct.followed()) == {"0xnew"}
 
 
 # ── Kelly ────────────────────────────────────────────────────────────────────
@@ -66,7 +92,7 @@ def _ct(api, db, settings, ask=0.41, norm=0.1, **cfg):
     api.markets["c1"] = {"closed": False, "accepting_orders": True, "taker_base_fee": 0,
                          "end_date_iso": "2099-01-01T00:00:00Z"}
     api.book_map["y1"] = make_book([(ask, 1000)], bids=[(ask - 0.02, 1000)], token="y1")
-    c = CopytradeSettings(max_days_to_resolve=100_000, family_alpha=0, **cfg)
+    c = CopytradeSettings(max_days_to_resolve=100_000, fdr_q=0, **cfg)
     return Copytrade(replace(settings, copytrade=c), api, db)
 
 

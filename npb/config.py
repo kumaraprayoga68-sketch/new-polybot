@@ -95,10 +95,11 @@ class CopytradeSettings:
     # Syarat trader diikuti: edge per share terukur vs harga beli mereka sendiri.
     min_trader_markets: int = 30
     min_trader_t: float = 2.0
-    # Koreksi multiple testing (Bonferroni): nguji N kandidat di t>=2 pasti ada
-    # yang lolos karena hoki. t yang dibutuhkan dinaikkan ke z(1 - alpha/N).
+    # Koreksi multiple testing (Benjamini-Hochberg): nguji N kandidat pasti ada
+    # yang kelihatan jago karena hoki. Ambang t dipilih supaya proporsi yang
+    # hoki di antara yang lolos <= fdr_q. min_trader_t tetap jadi batas bawah.
     # 0 = matikan koreksi (cuma pakai min_trader_t).
-    family_alpha: float = 0.05
+    fdr_q: float = 0.10
     # Holdout: market TERBARU trader (1/3) gak dipakai buat seleksi; edge di situ
     # harus tetap positif, dari minimal sekian market.
     min_holdout_markets: int = 10
@@ -194,7 +195,7 @@ class Settings:
                 follow_top=_i("CT_FOLLOW_TOP", 15),
                 min_trader_markets=_i("CT_MIN_TRADER_MARKETS", 30),
                 min_trader_t=_f("CT_MIN_TRADER_T", 2.0),
-                family_alpha=_f("CT_FAMILY_ALPHA", 0.05),
+                fdr_q=_f("CT_FDR_Q", 0.10),
                 min_holdout_markets=_i("CT_MIN_HOLDOUT_MARKETS", 10),
                 shrink_k=_f("CT_SHRINK_K", 30.0),
                 stats_refresh_hours=_f("CT_STATS_REFRESH_HOURS", 12.0),

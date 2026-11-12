@@ -245,7 +245,8 @@ def _traders(db: DB, followed: dict[str, float], ct) -> tuple[list[dict], float 
         t["followed"] = t["wallet"] in followed
         t["why_not"] = ct.follow_reasons(r, need_t) if ct else []
         out.append(t)
-    return out, need_t
+    # inf (gak ada yang lolos BH) gak valid di JSON -> None.
+    return out, (need_t if need_t is not None and need_t != float("inf") else None)
 
 
 def build(db: DB, settings: Settings, followed: dict[str, float] | None = None, ct=None) -> dict:

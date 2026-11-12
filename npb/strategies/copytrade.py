@@ -128,18 +128,39 @@ class Copytrade:
             self.db.set_meta("ct:stats_at", str(time.time()))
         return len(done)
 
-    def required_t(self) -> float:
-        """t minimum setelah koreksi multiple testing untuk jumlah kandidat sekarang.
+    def _tested(self) -> list:
+        """Trader yang ikut diuji di putaran ini: di kandidat sekarang, sudah
+        diukur dengan cara v2, dan market-nya cukup."""
+        pool = set(json.loads(self.db.get_meta("ct:pool", "[]") or "[]"))
+        return [r for r in self.db.trader_stats()
+                if (not pool or r["wallet"] in pool) and r["norm_edge"] is not None
+                and r["markets"] >= self.cfg.min_trader_markets]
 
-        300 kandidat diuji di t>=1.5 -> ~20 lolos murni karena hoki. Bonferroni
-        satu sisi: t >= z(1 - alpha/N). N=100 -> ~3.29, N=300 -> ~3.59."""
+    def required_t(self) -> float:
+        """t minimum setelah koreksi multiple testing (Benjamini-Hochberg).
+
+        300 kandidat diuji di t>=1.5 -> ~18 lolos murni karena hoki. Dulu pakai
+        Bonferroni (jaga supaya GAK SATU PUN yang hoki ikut kepilih) -> t>=3.66,
+        0 trader lolos. Padahal data asli 12 Nov: di t>=2.5 ada 13 trader vs ~1.7
+        yang diharapkan dari hoki, dan holdout mereka tetap positif. BH jaga
+        PROPORSI yang hoki di antara yang kepilih (default <= 10%), plus
+        holdout sebagai saringan kedua.
+
+        p_i = 1 - Phi(t_i). Urutkan naik; k = indeks terbesar dengan
+        p_(k) <= k*q/m. Ambang = t trader ke-k. Gak ada k -> gak ada yang lolos."""
         cfg = self.cfg
-        if cfg.family_alpha <= 0:
+        if cfg.fdr_q <= 0:
             return cfg.min_trader_t
-        n = len(json.loads(self.db.get_meta("ct:pool", "[]") or "[]"))
-        n = max(n, len(self.db.trader_stats()), 1)
-        z = NormalDist().inv_cdf(1 - min(0.5, cfg.family_alpha / n))
-        return max(cfg.min_trader_t, z)
+        ts = sorted((r["t_stat"] for r in self._tested()), reverse=True)
+        m = len(ts)
+        nd = NormalDist()
+        k = 0
+        for i, t in enumerate(ts, 1):
+            if 1 - nd.cdf(t) <= i * cfg.fdr_q / m:
+                k = i
+        if k == 0:
+            return float("inf")
+        return max(cfg.min_trader_t, ts[k - 1])
 
     def follow_reasons(self, r, need_t: float | None = None) -> list[str]:
         """Kenapa trader ini GAK diikuti (kosong = lulus semua syarat)."""
@@ -149,7 +170,8 @@ class Copytrade:
         if r["markets"] < cfg.min_trader_markets:
             out.append(f"market {r['markets']} < {cfg.min_trader_markets}")
         if r["t_stat"] < need_t:
-            out.append(f"t {r['t_stat']:.2f} < {need_t:.2f}")
+            out.append(f"t {r['t_stat']:.2f} < {need_t:.2f}" if math.isfinite(need_t)
+                       else f"t {r['t_stat']:.2f}, gak ada yang lolos koreksi BH")
         if r["norm_edge"] is None:
             out.append("belum diukur ulang (v2)")
         elif r["shrunk_edge"] <= 0 or r["norm_edge"] <= 0:
@@ -166,7 +188,7 @@ class Copytrade:
         cukup market, t lolos koreksi multiple testing, dan edge di holdout positif."""
         need_t = self.required_t()
         out = {}
-        for r in self.db.trader_stats():
+        for r in self._tested():
             if not self.follow_reasons(r, need_t):
                 out[r["wallet"]] = r["norm_edge"]
             if len(out) >= self.cfg.follow_top:

@@ -164,12 +164,22 @@ class DB:
             return self.conn.execute(sql, params).fetchall()
 
     def backup_to(self, dest: str) -> None:
-        """Snapshot konsisten (aman walau bot lagi nulis) ke satu file tanpa WAL."""
+        """Snapshot konsisten (aman walau bot lagi nulis) ke satu file tanpa WAL.
+        VACUUM INTO: halaman kosong bekas hapusan gak ikut kebawa (file lebih kecil)."""
         os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+        if os.path.exists(dest):
+            os.remove(dest)
+        with self._lock:
+            if self.path == ":memory:":
+                out = sqlite3.connect(dest)
+                try:
+                    self.conn.backup(out)
+                finally:
+                    out.close()
+            else:
+                self.conn.execute("VACUUM INTO ?", (dest,))
         out = sqlite3.connect(dest)
         try:
-            with self._lock:
-                self.conn.backup(out)
             out.execute("PRAGMA journal_mode=DELETE")
         finally:
             out.close()
@@ -248,8 +258,34 @@ class DB:
         return [r["condition_id"] for r in rows]
 
     def set_resolution(self, condition_id: str, payouts: dict[str, float]) -> None:
+        # Cuma token yang dapat bayaran yang disimpan; yang gak ada = 0 (semua
+        # pembaca pakai .get(token, 0) / COALESCE(..., 0)). Token ID 77 digit,
+        # jadi ini motong separuh ukuran tabel terbesar di DB.
+        paid = {k: v for k, v in payouts.items() if v}
         self.execute("INSERT OR REPLACE INTO resolutions(condition_id, payouts, resolved_at) "
-                     "VALUES(?,?,?)", (condition_id, json.dumps(payouts), time.time()))
+                     "VALUES(?,?,?)", (condition_id, json.dumps(paid), time.time()))
+
+    def prune_resolutions(self, keep_days: float = 10.0) -> tuple[int, int]:
+        """(dihapus, dipadatkan). Cache hasil market buat ngukur trader numbuh
+        ~15 ribu baris/hari (DB 60 MB di 16 Nov); snapshot .gz di atas 100 MB
+        bakal ditolak GitHub. Yang dibuang: lebih tua dari keep_days DAN gak
+        dipakai order kita — kalau masih kepakai buat ngukur trader, diambil ulang."""
+        cur = self.execute(
+            "DELETE FROM resolutions WHERE resolved_at < ? AND NOT EXISTS "
+            "(SELECT 1 FROM orders o WHERE o.condition_id=resolutions.condition_id)",
+            (time.time() - keep_days * 86400,))
+        deleted = cur.rowcount
+        compacted = 0
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT condition_id, payouts FROM resolutions WHERE payouts LIKE '%: 0.0%'").fetchall()
+            for r in rows:
+                paid = {k: v for k, v in json.loads(r["payouts"]).items() if v}
+                self.conn.execute("UPDATE resolutions SET payouts=? WHERE condition_id=?",
+                                  (json.dumps(paid), r["condition_id"]))
+                compacted += 1
+            self.conn.commit()
+        return deleted, compacted
 
     def resolution(self, condition_id: str) -> dict[str, float] | None:
         rows = self.query("SELECT payouts FROM resolutions WHERE condition_id=?", (condition_id,))

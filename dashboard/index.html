@@ -164,17 +164,55 @@ const BRANCH_URL = `https://raw.githubusercontent.com/${REPO}/refs/heads/data/da
 // (kelihatan: branch udah ada data baru, dashboard masih nampilin yang lama).
 // Jadi: tanya SHA terbaru branch `data` ke API (respons 304 gak makan kuota
 // 60/jam), lalu baca file dari SHA itu — URL per commit gak pernah basi.
-async function dataUrl() {
-  if (SRC) return SRC + "?t=" + Date.now();
+// Kuota API GitHub tanpa login cuma 60/jam per IP (dipakai bareng semua tab &
+// HP di jaringan yang sama). Data cuma berubah tiap ~5 menit, jadi SHA ditanya
+// paling sering tiap 5 menit dan disimpen (juga lintas reload). Kalau kena limit,
+// pakai SHA terakhir yang diketahui + URL branch, lalu ambil yang lebih baru.
+const SHA_TTL = 5 * 60 * 1000;
+const store = {
+  get() { try { return JSON.parse(localStorage.getItem("npb-sha") || "null"); } catch (e) { return null; } },
+  set(v) { try { localStorage.setItem("npb-sha", JSON.stringify(v)); } catch (e) { /* private mode */ } },
+};
+let limitedUntil = 0;
+async function latestSha() {
+  const c = store.get();
+  if (c && Date.now() - c.at < SHA_TTL) return c.sha;
+  if (Date.now() < limitedUntil) return c ? c.sha : null;
   try {
     const r = await fetch(`https://api.github.com/repos/${REPO}/git/ref/heads/data`, { cache: "no-cache" });
-    if (r.status === 404) return null;
+    if (r.status === 404) return "none";
     if (r.ok) {
       const sha = (await r.json()).object?.sha;
-      if (sha) return `https://raw.githubusercontent.com/${REPO}/${sha}/dashboard.json`;
+      if (sha) { store.set({ sha, at: Date.now() }); return sha; }
+    } else if (r.status === 403 || r.status === 429) {
+      const reset = +r.headers.get("x-ratelimit-reset");
+      limitedUntil = reset ? reset * 1000 : Date.now() + 15 * 60 * 1000;
     }
-  } catch (e) { /* kena limit / offline: pakai URL branch */ }
-  return BRANCH_URL + "?t=" + Date.now();
+  } catch (e) { /* offline */ }
+  return c ? c.sha : null;
+}
+async function fetchJson(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (r.status === 404) return { status: 404 };
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return { status: 200, data: await r.json() };
+}
+async function loadData() {
+  if (SRC) return fetchJson(SRC + "?t=" + Date.now());
+  const sha = await latestSha();
+  if (sha === "none") return { status: 404 };
+  const tries = [];
+  if (sha) tries.push(fetchJson(`https://raw.githubusercontent.com/${REPO}/${sha}/dashboard.json`).catch(() => null));
+  // URL branch kadang basi, kadang malah lebih baru dari SHA yang disimpen: ambil dua-duanya.
+  if (!sha || Date.now() - ((store.get() || {}).at || 0) >= SHA_TTL)
+    tries.push(fetchJson(BRANCH_URL + "?t=" + Date.now()).catch(() => null));
+  const got = (await Promise.all(tries)).filter(x => x && x.status === 200);
+  if (!got.length) {
+    const any = (await Promise.all(tries)).find(x => x);
+    if (any) return any;
+    throw new Error("gagal ambil data");
+  }
+  return got.reduce((a, b) => (b.data.generated_at > a.data.generated_at ? b : a));
 }
 let D = null, TAB = "bets";
 
@@ -295,7 +333,7 @@ function drawPnl(card, pts) {
       Grafik muncul setelah bet paper mulai selesai.</div>`;
     return;
   }
-  const W = plot.clientWidth, H = 170, L = 44, R = 8, T = 8, B = 20;
+  const W = Math.max(280, plot.clientWidth), H = 170, L = 44, R = 8, T = 8, B = 20;
   const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
   const ticks = niceTicks(Math.min(0, ...ys), Math.max(0, ...ys));
   const y0 = ticks[0], y1 = ticks[ticks.length - 1], x0 = xs[0], x1 = xs[xs.length - 1] || x0 + 1;
@@ -333,7 +371,7 @@ function drawPnl(card, pts) {
 function drawHourly(card, rows) {
   const plot = card.querySelector(".plot");
   rows = rows.slice(-24);
-  const W = plot.clientWidth, H = 150, L = 26, R = 4, T = 8, B = 20;
+  const W = Math.max(280, plot.clientWidth), H = 150, L = 26, R = 4, T = 8, B = 20;
   const max = Math.max(1, ...rows.map(r => r.take + r.skip));
   const ticks = niceTicks(0, max, 3).filter(v => v >= 0 && Number.isInteger(v));
   const top = ticks[ticks.length - 1] || 1;
@@ -503,7 +541,7 @@ function drawDaily(card, curve) {
   });
   const rows = Object.entries(by).slice(-14);
   if (!rows.length) { plot.innerHTML = `<div class="nodata">Belum ada bet yang settle.</div>`; return; }
-  const W = plot.clientWidth, H = 150, L = 40, R = 4, T = 8, B = 20;
+  const W = Math.max(280, plot.clientWidth), H = 150, L = 40, R = 4, T = 8, B = 20;
   const ticks = niceTicks(Math.min(0, ...rows.map(r => r[1])), Math.max(0, ...rows.map(r => r[1])), 3);
   const y0 = ticks[0], y1 = ticks[ticks.length - 1];
   const Y = v => T + (H - T - B) * (1 - (v - y0) / (y1 - y0));
@@ -688,8 +726,7 @@ function renderPanel() {
 async function load() {
   $("dot").style.background = "var(--amber)";
   try {
-    const url = await dataUrl();
-    const r = url ? await fetch(url, { cache: "no-store" }) : { status: 404 };
+    const r = await loadData();
     if (r.status === 404) {
       $("dot").style.background = "var(--mut)";
       $("sub").textContent = "belum ada data";
@@ -697,8 +734,7 @@ async function load() {
         Jalankan workflow <b>bot 24/7 (paper)</b> di tab Actions repo new-polybot,<br>data muncul ±2 menit setelahnya.</div>`;
       return;
     }
-    if (!r.ok) throw new Error("HTTP " + r.status);
-    D = await r.json();
+    D = r.data;
     renderTop(); renderRisk(); renderCharts(); renderGates(); renderCalib(); renderBreakdown(); renderTabs(); renderPanel();
   } catch (e) {
     $("dot").style.background = "var(--red)";

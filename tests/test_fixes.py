@@ -297,3 +297,28 @@ def test_archive_resets_paper_but_keeps_data(db, settings):
     assert d["bets"] == [] and d["summary"]["bets"] == 0 and d["archives"][0]["pnl"] == -5.0
     res = Executor(settings, db).submit(Decision("copytrade", [_leg(cid="new")]))
     assert res.status == "filled"                       # rem rugi & mtm ikut reset
+
+
+# ── ukuran DB ────────────────────────────────────────────────────────────────
+def test_prune_resolutions_keeps_order_markets_and_results(tmp_path, db, settings):
+    order(db, "ours", "t1", 4.0)
+    db.set_resolution("ours", {"t1": 1.0, "t2": 0.0})
+    db.set_resolution("cache-old", {"a": 0.0, "b": 1.0})
+    db.set_resolution("cache-new", {"a": 1.0, "b": 0.0})
+    db.set_resolution("split", {"a": 0.5, "b": 0.5})
+    db.execute("UPDATE resolutions SET resolved_at=0 WHERE condition_id IN ('ours','cache-old')")
+    pnl = db.realized_pnl_since(-1)
+    deleted, _ = db.prune_resolutions(keep_days=10)
+    assert deleted == 1 and db.resolution("cache-old") is None
+    assert db.resolution("ours") == {"t1": 1.0}                 # yang kalah gak disimpen
+    assert db.resolution("split") == {"a": 0.5, "b": 0.5}
+    assert db.realized_pnl_since(-1) == pnl
+    # format lama (dengan 0.0) dipadatkan
+    db.execute("UPDATE resolutions SET payouts=? WHERE condition_id='cache-new'",
+               (json.dumps({"a": 1.0, "b": 0.0}),))
+    assert db.prune_resolutions()[1] == 1 and db.resolution("cache-new") == {"a": 1.0}
+    src = DB(str(tmp_path / "f.db"))
+    src.set_resolution("x", {"a": 1.0})
+    src.backup_to(str(tmp_path / "snap.db"))
+    src.backup_to(str(tmp_path / "snap.db"))                    # timpa file lama juga aman
+    assert DB(str(tmp_path / "snap.db")).resolution("x") == {"a": 1.0}

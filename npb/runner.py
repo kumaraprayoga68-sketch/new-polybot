@@ -120,6 +120,15 @@ class Bot:
             self.db.set_meta(f"mtm:{mode}", json.dumps(
                 {"ts": time.time(), "unrealized": total, "positions": priced}))
 
+    def prune(self, force: bool = False) -> None:
+        """Rapikan cache resolusi sekali tiap 6 jam (lihat DB.prune_resolutions)."""
+        if not force and time.time() - float(self.db.get_meta("prune:last", "0") or 0) < 6 * 3600:
+            return
+        self.db.set_meta("prune:last", str(time.time()))
+        deleted, compacted = self.db.prune_resolutions()
+        if deleted or compacted:
+            self.log(f"🧹 cache resolusi: {deleted} dibuang, {compacted} dipadatkan")
+
     def auto_demote(self) -> None:
         """Strategi live yang jelas rugi dicabut promosinya otomatis."""
         for name in ("copytrade", "arbitrage"):
@@ -151,6 +160,7 @@ class Bot:
         settled = self._step("resolve", self.resolve) or 0
         self._step("marks", self.mark)
         self._step("mtm", self.mark_to_market)
+        self._step("prune", self.prune)
         self._step("gate", self.auto_demote)
         self.db.set_meta("last_cycle", str(time.time()))
         if settled:

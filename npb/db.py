@@ -349,7 +349,17 @@ class DB:
         cur = self.execute("UPDATE orders SET mode=? WHERE mode=?", (label, mode))
         self.set_meta(f"mtm:{mode}", None)
         self.log("warn", "archive", f"{cur.rowcount} order {mode} dipindah ke {label}")
+        self.set_meta("archive:last_ts", str(time.time()))
         return cur.rowcount
+
+    def last_reset_ts(self) -> float | None:
+        """Kapan catatan paper terakhir di-reset (archive). Fallback ke log buat
+        arsip yang dibuat sebelum meta ini ada."""
+        v = self.get_meta("archive:last_ts")
+        if v:
+            return float(v)
+        rows = self.query("SELECT MAX(ts) AS t FROM log WHERE source='archive'")
+        return rows[0]["t"] if rows and rows[0]["t"] else None
 
     def archives(self) -> list[dict]:
         """Ringkasan tiap label arsip."""

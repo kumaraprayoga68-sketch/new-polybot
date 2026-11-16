@@ -70,3 +70,18 @@ def test_detail_sections_and_no_secrets(db, settings):
     assert d["by_wallet"][0]["key"] == "0xw" and d["by_wallet"][0]["n"] == 2
     assert all(b["two_sided"] for b in d["bets"])
     assert d["risk_state"]["paper"]["realized_24h"] == 0.0
+
+
+def test_signal_counts_start_at_last_reset(db, settings):
+    import time as _t
+
+    db.add_signal("copytrade", "old", decision="take")
+    db.add_signal("copytrade", "old2", decision="skip", reason="slippage: x")
+    db.execute("UPDATE signals SET ts=?", (_t.time() - 3600,))
+    db.archive("arsip-v9")
+    db.add_signal("copytrade", "new", decision="skip", reason="Kelly 0 (x)")
+    d = export.build(db, settings)
+    assert d["signal_counts_24h"] == {"copytrade:skip": 1}
+    assert d["skip_reasons_24h"] == [{"reason": "Kelly", "n": 1}]
+    assert sum(h["take"] + h["skip"] for h in d["hourly"]) == 1
+    assert d["reset_ts"] and _t.time() - d["reset_ts"] < 60

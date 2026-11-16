@@ -54,11 +54,11 @@ def _pnl_curve(db: DB, mode: str = "paper", limit: int = 2000) -> list[list[floa
     return out[-limit:]
 
 
-def _hourly(db: DB, now: float, hours: int = 48) -> list[dict]:
-    """Jumlah sinyal per jam (ikut/skip) untuk `hours` jam terakhir."""
+def _hourly(db: DB, now: float, hours: int = 48, since: float = 0.0) -> list[dict]:
+    """Jumlah sinyal per jam (ikut/skip) untuk `hours` jam terakhir, cuma sejak `since`."""
     start = (int(now) // 3600 - hours + 1) * 3600
     buckets = {start + i * 3600: {"take": 0, "skip": 0} for i in range(hours)}
-    for r in db.query("SELECT ts, decision FROM signals WHERE ts >= ?", (start,)):
+    for r in db.query("SELECT ts, decision FROM signals WHERE ts >= ?", (max(start, since),)):
         b = buckets.get(int(r["ts"]) // 3600 * 3600)
         if b is not None and r["decision"] in b:
             b[r["decision"]] += 1
@@ -70,9 +70,10 @@ def _skip_reason_key(reason: str) -> str:
     return re.split(r"\s*-?[\d:(]", reason or "", maxsplit=1)[0].strip() or "lainnya"
 
 
-def _skip_reasons(db: DB, now: float) -> list[dict]:
+def _skip_reasons(db: DB, now: float, since: float = 0.0) -> list[dict]:
     counts: dict[str, int] = {}
-    for r in db.query("SELECT reason FROM signals WHERE decision='skip' AND ts > ?", (now - 86400,)):
+    for r in db.query("SELECT reason FROM signals WHERE decision='skip' AND ts > ?",
+                      (max(now - 86400, since),)):
         k = _skip_reason_key(r["reason"])
         counts[k] = counts.get(k, 0) + 1
     return [{"reason": k, "n": v} for k, v in sorted(counts.items(), key=lambda x: -x[1])]
@@ -255,9 +256,13 @@ def build(db: DB, settings: Settings, followed: dict[str, float] | None = None, 
             s["wallet"] = json.loads(s.pop("extra") or "{}").get("wallet")
         except ValueError:
             s["wallet"] = None
+    # Sinyal dihitung sejak reset (archive) terakhir kalau itu < 24 jam lalu,
+    # biar abis reset dashboard gak nampilin sinyal dari logika lama.
+    reset_ts = db.last_reset_ts()
+    since = reset_ts or 0.0
     counts = {f"{x['strategy']}:{x['decision']}": x["n"] for x in db.query(
         "SELECT strategy, decision, COUNT(*) AS n FROM signals WHERE ts > ? "
-        "GROUP BY strategy, decision", (now - 86400,))}
+        "GROUP BY strategy, decision", (max(now - 86400, since),))}
     followed = followed or {}
     traders, need_t = _traders(db, followed, ct)
     errors = [dict(e) for e in db.query(
@@ -294,8 +299,9 @@ def build(db: DB, settings: Settings, followed: dict[str, float] | None = None, 
         "signal_counts_24h": counts,
         "drift": _drift(db),
         "pnl_curve": curve,
-        "hourly": _hourly(db, now),
-        "skip_reasons_24h": _skip_reasons(db, now),
+        "hourly": _hourly(db, now, since=since),
+        "skip_reasons_24h": _skip_reasons(db, now, since),
+        "reset_ts": reset_ts,
         "traders": traders,
         "traders_required_t": need_t,
         "traders_measured_at": float(db.get_meta("ct:stats_at", "0") or 0),

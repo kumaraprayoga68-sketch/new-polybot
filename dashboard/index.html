@@ -279,7 +279,8 @@ function renderTop() {
     ["Fee dibayar", usd(S.fees), S.fee_pct != null ? pct(S.fee_pct, false) + " modal" : ""],
     ["Max drawdown", `<span class="neg">${usd(S.max_drawdown)}</span>`, ""],
     ["Bet", S.bets ?? D.bets.length, `${S.open ?? open} open`],
-    ["Sinyal 24j", take, `ikut · ${skip} skip`],
+    [D.reset_ts && Date.now() / 1000 - D.reset_ts < 86400 ? `Sinyal sejak reset` : "Sinyal 24j", take,
+      `ikut · ${skip} skip${D.reset_ts && Date.now() / 1000 - D.reset_ts < 86400 ? " · " + ago(D.reset_ts) : ""}`],
   ];
   $("tiles").innerHTML = tiles.map(([k, v, s]) =>
     `<div class="tile"><div class="k">${k}</div><div class="v">${v} <small>${s}</small></div></div>`).join("");
@@ -453,7 +454,7 @@ function renderCharts() {
   $("charts").innerHTML =
     chartBox("c-pnl", "PnL kumulatif (paper)", `${pnl.length} settle · <span class="${cls(last)}">${usd(last, true)}</span>`, true) +
     chartBox("c-hour", "Sinyal per jam", "24 jam terakhir") +
-    chartBox("c-skip", "Kenapa di-skip", `${nSkip} skip · 24 jam`);
+    chartBox("c-skip", "Kenapa di-skip", `${nSkip} skip · ${D.reset_ts && Date.now() / 1000 - D.reset_ts < 86400 ? "sejak reset" : "24 jam"}`);
   drawPnl($("c-pnl"), pnl);
   drawHourly($("c-hour"), D.hourly && D.hourly.length ? D.hourly : fallbackHourly());
   drawReasons($("c-skip"), reasons);

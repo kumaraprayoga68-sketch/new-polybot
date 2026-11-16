@@ -15,30 +15,13 @@ import time
 from dataclasses import asdict
 
 from . import scorecard
+from .categories import category
 from .config import Settings
 from .db import DB
 from .stats import mean
 
 STRATEGIES = ("copytrade", "arbitrage")
 
-# Kategori kasar dari judul market — buat lihat di mana strategi untung / rugi.
-_CATEGORIES = (
-    ("crypto up/down", re.compile(r"up or down", re.I)),
-    ("crypto", re.compile(r"\b(bitcoin|btc|ethereum|eth|solana|xrp|doge|crypto)\b", re.I)),
-    ("esports", re.compile(r"\b(dota|counter-strike|cs2|lol:|league of legends|valorant|"
-                           r"overwatch|rocket league|call of duty|r6|rainbow six|starcraft)\b", re.I)),
-    ("politik", re.compile(r"\b(election|president|senate|governor|trump|parliament|"
-                           r"prime minister|vote|party)\b", re.I)),
-    ("olahraga", re.compile(r"(\bvs\.?\b|\bo/u\b|spread|\bwin\b|map \d|game \d|set \d|"
-                            r"\bnba\b|\bnfl\b|\bnhl\b|\bmlb\b|premier league|open\b)", re.I)),
-)
-
-
-def category(title: str) -> str:
-    for name, rx in _CATEGORIES:
-        if rx.search(title or ""):
-            return name
-    return "lainnya"
 
 
 def _json_meta(db: DB, key: str):

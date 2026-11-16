@@ -24,6 +24,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from .. import traders
+from ..categories import category
 from ..api import PolymarketAPI
 from ..broker import Leg
 from ..config import Settings
@@ -258,6 +259,10 @@ class Copytrade:
         def skip(reason, **kw):
             self.db.add_signal(NAME, key, decision="skip", reason=reason, **base, **kw)
             return None
+
+        cat = category(base["market"])
+        if cat in cfg.exclude_categories:
+            return skip(f"kategori dikecualikan ({cat})")
 
         # Satu posisi per market. Dua alasan: (1) dua trader di sisi berlawanan =
         # kita taruhan lawan diri sendiri, yang pasti hilang cuma fee+spread;

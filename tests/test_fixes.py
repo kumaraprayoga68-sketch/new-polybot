@@ -322,3 +322,21 @@ def test_prune_resolutions_keeps_order_markets_and_results(tmp_path, db, setting
     src.backup_to(str(tmp_path / "snap.db"))
     src.backup_to(str(tmp_path / "snap.db"))                    # timpa file lama juga aman
     assert DB(str(tmp_path / "snap.db")).resolution("x") == {"a": 1.0}
+
+
+# ── kategori dikecualikan ────────────────────────────────────────────────────
+def test_crypto_up_down_excluded_by_default(api, db, settings, monkeypatch):
+    from npb.config import Settings as S
+
+    ct = _ct(api, db, settings, norm=0.3)
+    db.set_trader_last_ts(W, 0)
+    api.trades[W] = [_trade(title="Bitcoin Up or Down - November 11, 4:15AM-4:20AM ET")]
+    assert ct.decisions(log=lambda *_: None) == []
+    assert "kategori dikecualikan" in db.query("SELECT reason FROM signals")[0]["reason"]
+    api.trades[W] = [_trade(tx="ok", title="Will the price of Bitcoin be above $70,000 on November 20?")]
+    assert len(ct.decisions(log=lambda *_: None)) == 1            # crypto biasa tetap boleh
+    assert S.from_env().copytrade.exclude_categories == ("crypto up/down",)
+    monkeypatch.setenv("CT_EXCLUDE_CATEGORIES", "")
+    assert S.from_env().copytrade.exclude_categories == ()
+    monkeypatch.setenv("CT_EXCLUDE_CATEGORIES", "crypto up/down,olahraga")
+    assert S.from_env().copytrade.exclude_categories == ("crypto up/down", "olahraga")
